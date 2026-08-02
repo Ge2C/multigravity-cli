@@ -31,18 +31,20 @@ irm https://raw.githubusercontent.com/sujitagarwal/multigravity-cli/main/install
 
 ## Quick Start
 
+> **Note**: Both `multigravity` and `mgy` commands are supported!
+
 ```bash
 # Create profiles
-multigravity new work
-multigravity new personal
+mgy new work          # (or: multigravity new work)
+mgy new personal
 
 # Launch a profile
-multigravity work
+mgy work
 
 # Pass arguments straight through to Antigravity
-multigravity work .
-multigravity work path/to/project
-multigravity work --new-window
+mgy work .
+mgy work path/to/project
+mgy work --new-window
 ```
 
 Each profile gets an automatic clickable launcher:

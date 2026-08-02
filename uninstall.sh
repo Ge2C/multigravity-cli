@@ -18,12 +18,15 @@ echo ""
 REMOVED=0
 
 # ── binary + icon ─────────────────────────────────────────────────────────────
-for dir in "/usr/local/bin" "$HOME/.local/bin"; do
-  if [ -f "$dir/multigravity" ]; then
-    print_step "Removing $dir/multigravity"
-    rm -f "$dir/multigravity"
-    REMOVED=$((REMOVED + 1))
-  fi
+for dir in "/usr/local/bin" "$HOME/.local/bin" "${PREFIX:-}/bin"; do
+  [ -z "$dir" ] || [ ! -d "$dir" ] && continue
+  for bin in "mgy" "multigravity"; do
+    if [ -f "$dir/$bin" ]; then
+      print_step "Removing $dir/$bin"
+      rm -f "$dir/$bin"
+      REMOVED=$((REMOVED + 1))
+    fi
+  done
   if [ "$PLATFORM" = "darwin" ] && [ -f "$dir/icon.icns" ]; then
     print_step "Removing $dir/icon.icns"
     rm -f "$dir/icon.icns"

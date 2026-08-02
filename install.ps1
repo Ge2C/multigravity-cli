@@ -48,19 +48,20 @@ try {
     Abort "Failed to download multigravity.ps1: $_"
 }
 
-Write-Step "Creating wrapper script..."
+Write-Step "Creating wrapper scripts..."
 $wrapper = @"
 @echo off
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0multigravity.ps1" %*
 "@
 
-# Save wrapper as ASCII for widest compatibility with cmd.exe
+# Save wrappers as ASCII for widest compatibility with cmd.exe
 [System.IO.File]::WriteAllText("$INSTALL_DIR\multigravity.cmd", $wrapper, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText("$INSTALL_DIR\mgy.cmd", $wrapper, [System.Text.Encoding]::ASCII)
 
 Write-Host ""
 Write-Host "✓ Multigravity installed successfully!"
 Write-Host ""
-Write-Host "Usage:"
-Write-Host "  multigravity help"
-Write-Host "  multigravity new <profile-name>"
-Write-Host "  multigravity <profile-name>"
+Write-Host "Usage (using 'mgy' or 'multigravity'):"
+Write-Host "  mgy help              (or: multigravity help)"
+Write-Host "  mgy new <profile>     (or: multigravity new <profile>)"
+Write-Host "  mgy <profile>         (or: multigravity <profile>)"

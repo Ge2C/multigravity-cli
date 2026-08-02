@@ -56,7 +56,7 @@ function Test-SharedProfile {
 }
 
 function Write-Usage {
-    Write-Host "Usage: multigravity <command> [args]"
+    Write-Host "Usage: multigravity (or mgy) <command> [args]"
     Write-Host ""
     Write-Host "Commands:"
     Write-Host "  new <name> [options]        Create a new profile + Start Menu shortcut"

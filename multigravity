@@ -37,6 +37,10 @@ platform() {
   esac
 }
 
+is_termux() {
+  [ -n "${TERMUX_VERSION-}" ] || [ -d "/data/data/com.termux" ]
+}
+
 profile_dir() {
   printf '%s/%s\n' "$BASE" "$1"
 }
@@ -150,10 +154,14 @@ find_app() {
     linux)
       for candidate in \
         "antigravity" \
+        "agy" \
+        "${PREFIX:-}/bin/antigravity" \
+        "${PREFIX:-}/bin/agy" \
         "/usr/share/antigravity/antigravity" \
         "/usr/bin/antigravity" \
         "/usr/local/bin/antigravity" \
         "$HOME/.local/bin/antigravity" \
+        "$HOME/.local/bin/agy" \
         "$HOME/Applications/Antigravity.AppImage"
       do
         if command_or_path "$candidate" >/dev/null 2>&1; then
@@ -613,7 +621,11 @@ doctor_cli() {
 
   # 1. Platform Check
   if platform &>/dev/null; then
-    echo "  [✓] Platform: $(platform)"
+    if is_termux; then
+      echo "  [✓] Platform: $(platform) (Termux)"
+    else
+      echo "  [✓] Platform: $(platform)"
+    fi
   else
     echo "  [✗] Platform: Unknown"
     errors=$((errors + 1))
@@ -629,7 +641,7 @@ doctor_cli() {
 
   # 3. Path Check
   local installed
-  installed="$(command -v multigravity 2>/dev/null || true)"
+  installed="$(command -v mgy 2>/dev/null || command -v multigravity 2>/dev/null || true)"
   if [ -n "$installed" ]; then
     echo "  [✓] Global Binary: $installed"
   else
@@ -970,7 +982,7 @@ EOF
 
 usage() {
   cat <<EOF
-Usage: multigravity <command> [args]
+Usage: multigravity (or mgy) <command> [args]
 
 Commands:
   new <name> [options]        Create a new profile + desktop shortcut

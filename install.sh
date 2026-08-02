@@ -26,8 +26,10 @@ esac
 # ── preflight ────────────────────────────────────────────────────────────────
 command -v curl &>/dev/null || abort "curl is required but not found"
 
-# fall back to ~/.local/bin if /usr/local/bin isn't writable without sudo
-if [ ! -w "$INSTALL_DIR" ]; then
+# fall back to $PREFIX/bin (Termux) or ~/.local/bin if /usr/local/bin isn't writable
+if [ -n "${PREFIX:-}" ] && [ -w "$PREFIX/bin" ]; then
+  INSTALL_DIR="$PREFIX/bin"
+elif [ ! -w "$INSTALL_DIR" ]; then
   INSTALL_DIR="$HOME/.local/bin"
   mkdir -p "$INSTALL_DIR"
 
@@ -64,6 +66,10 @@ print_step "Downloading multigravity..."
 curl -fsSL "$RAW/multigravity" -o "$INSTALL_DIR/multigravity"
 chmod +x "$INSTALL_DIR/multigravity"
 
+# ── create mgy alias symlink ──────────────────────────────────────────────────
+print_step "Creating mgy alias..."
+ln -sf "$INSTALL_DIR/multigravity" "$INSTALL_DIR/mgy" 2>/dev/null || cp "$INSTALL_DIR/multigravity" "$INSTALL_DIR/mgy"
+
 # ── download macOS icon ──────────────────────────────────────────────────────
 if [ "$PLATFORM" = "darwin" ]; then
   print_step "Downloading icon..."
@@ -76,10 +82,10 @@ echo ""
 echo "Reload your shell to apply PATH changes:"
 echo "  source ~/.zshrc   (or ~/.bashrc, or open a new terminal)"
 echo ""
-echo "Usage:"
-echo "  multigravity help"
-echo "  multigravity new <profile-name>"
-echo "  multigravity <profile-name>"
+echo "Usage (using 'mgy' or 'multigravity'):"
+echo "  mgy help              (or: multigravity help)"
+echo "  mgy new <profile>     (or: multigravity new <profile>)"
+echo "  mgy <profile>         (or: multigravity <profile>)"
 
 if [ "$PLATFORM" = "linux" ] && ! command -v antigravity &>/dev/null && [ ! -x /usr/share/antigravity/antigravity ]; then
   echo ""
