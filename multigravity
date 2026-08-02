@@ -496,31 +496,46 @@ _real_home() {
   printf '%s' "$HOME"
 }
 
+# Check if a profile is shared by path (presence of .shared marker file).
+# Complements is_shared_profile() which works by profile name.
+_profile_path_is_shared() {
+  [ -f "$1/.shared" ]
+}
+
 _run_in_profile_env() {
   # Runs "$@" inside the profile's fully isolated environment.
   # Usage: _run_in_profile_env <profile_path> <cmd> [args...]
   #
-  # Antigravity-specific dirs (HOME, XDG_*) are redirected into the profile so
-  # each profile gets its own Antigravity session, extensions, and config.
+  # Profile isolation model:
   #
-  # Developer tools (gh, git, npm, go, cargo, ssh, pip, …) must NOT be isolated
-  # because they store credentials and global settings in the real system home.
-  # We pin each tool's config env var back to the real home so switching profiles
-  # never breaks authenticated CLI tools.
+  #   Non-shared profile (default):
+  #     Fully isolated — HOME, XDG_*, and all developer tool config dirs
+  #     resolve inside the profile directory. Each profile can have its own
+  #     gh login, git identity, npm account, etc. Nothing leaks from the
+  #     real system home into the profile.
+  #
+  #   Shared profile (--shared flag / .shared marker):
+  #     AGY session/login is still isolated per profile (GEMINI_CLI_HOME,
+  #     ANTIGRAVITY_CONFIG_DIR). AGY plugins/extensions/config are symlinked
+  #     from the system install (handled by create_shared_layout). Developer
+  #     tool credentials (gh, git, npm, go, cargo, ssh, gpg, pip, aws) are
+  #     pinned to the real system home so all shared profiles use the same
+  #     authenticated tool accounts.
   local profile_path=$1
   shift
 
   local real_home
   real_home="$(_real_home)"
 
-  # Build the tool-passthrough vars only when running on Linux/Termux.
-  # On macOS the Keychain handles credentials independently of HOME.
+  # Tool credential passthrough — SHARED PROFILES ONLY on Linux/Termux.
+  # Non-shared profiles get full isolation; no passthrough is added.
+  # On macOS the Keychain handles credentials independently of HOME regardless.
   local tool_env=()
-  if [ "$(platform)" = "linux" ]; then
+  if [ "$(platform)" = "linux" ] && _profile_path_is_shared "$profile_path"; then
     # Snapshot real home once so child processes inherit it after HOME is overridden.
     tool_env+=(MULTIGRAVITY_REAL_HOME="$real_home")
 
-    # GitHub CLI — stores OAuth token / host config
+    # GitHub CLI — OAuth token / host config
     tool_env+=(GH_CONFIG_DIR="${GH_CONFIG_DIR:-$real_home/.config/gh}")
 
     # Git — global config and credential helper
@@ -550,7 +565,7 @@ _run_in_profile_env() {
     tool_env+=(AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$real_home/.aws/config}")
     tool_env+=(AWS_SHARED_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$real_home/.aws/credentials}")
 
-    # Ensure ~/.local/bin from real home is on PATH so globally installed tools are found
+    # Ensure real home's ~/.local/bin is on PATH so globally installed tools are found
     if [[ ":$PATH:" != *":$real_home/.local/bin:"* ]]; then
       tool_env+=(PATH="$real_home/.local/bin:$PATH")
     fi
