@@ -66,6 +66,11 @@ print_step "Downloading multigravity..."
 curl -fsSL "$RAW/multigravity" -o "$INSTALL_DIR/multigravity"
 chmod +x "$INSTALL_DIR/multigravity"
 
+if command -v termux-fix-shebang &>/dev/null; then
+  print_step "Fixing shebang for Termux..."
+  termux-fix-shebang "$INSTALL_DIR/multigravity"
+fi
+
 # ── create mgy alias symlink ──────────────────────────────────────────────────
 print_step "Creating mgy alias..."
 ln -sf "$INSTALL_DIR/multigravity" "$INSTALL_DIR/mgy" 2>/dev/null || cp "$INSTALL_DIR/multigravity" "$INSTALL_DIR/mgy"
