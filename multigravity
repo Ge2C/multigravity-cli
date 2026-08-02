@@ -72,6 +72,10 @@ extensions_dir() {
 }
 
 system_user_data_dir() {
+  if [ -d "$HOME/.gemini/antigravity-cli" ]; then
+    printf '%s/.gemini/antigravity-cli\n' "$HOME"
+    return 0
+  fi
   case "$(platform)" in
     darwin) printf '%s/Library/Application Support/Antigravity\n' "$HOME" ;;
     linux)  printf '%s/.config/Antigravity\n' "$HOME" ;;
@@ -524,20 +528,26 @@ new_profile() {
   mkdir -p "$BASE"
 
   if [ "$from_tpl" = "default" ]; then
-    local sys_data data_dir
-    sys_data="$(system_user_data_dir)"
     if [ "$shared" = true ]; then
       create_shared_layout "$profile_path"
     else
       create_profile_layout "$profile_path"
     fi
-    if [ -d "$sys_data" ]; then
-      print_info "Seeding profile '$profile' from default Antigravity installation..."
-      data_dir="$(user_data_dir "$profile_path")"
-      mkdir -p "$data_dir"
-      cp -R "$sys_data/"* "$data_dir/" 2>/dev/null || true
+    local copied=false
+    if [ -d "$HOME/.gemini/antigravity-cli" ]; then
+      mkdir -p "$profile_path/.gemini"
+      cp -R "$HOME/.gemini/antigravity-cli" "$profile_path/.gemini/" 2>/dev/null || true
+      copied=true
+    fi
+    if [ -d "$HOME/.config/Antigravity" ]; then
+      mkdir -p "$profile_path/.config"
+      cp -R "$HOME/.config/Antigravity" "$profile_path/.config/" 2>/dev/null || true
+      copied=true
+    fi
+    if [ "$copied" = true ]; then
+      print_info "Seeded profile '$profile' from default Antigravity session data..."
     else
-      print_info "Default session data not found at $sys_data. Initialized clean profile."
+      print_info "Default session data not found. Initialized clean profile '$profile'."
     fi
   elif [ -n "$from_tpl" ]; then
     local tpl_path
