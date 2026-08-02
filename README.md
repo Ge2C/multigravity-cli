@@ -93,6 +93,7 @@ Each profile gets an automatic clickable launcher:
 | Command | Description |
 |---------|-------------|
 | `multigravity stats` | Show disk usage per profile |
+| `multigravity setup` | Run interactive setup wizard |
 | `multigravity doctor` | Diagnose your environment |
 | `multigravity update` | Update Multigravity to the latest version |
 | `multigravity completion` | Set up shell tab-completion |

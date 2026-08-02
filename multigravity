@@ -685,6 +685,70 @@ doctor_cli() {
   fi
 }
 
+cmd_setup() {
+  echo "=================================================="
+  echo "  Multigravity Interactive Setup Wizard"
+  echo "=================================================="
+  echo ""
+
+  # Step 1: Environment & Platform Check
+  print_info "Step 1: Checking Platform & Environment..."
+  if is_termux; then
+    echo "  → Detected: Termux (Android Linux)"
+  else
+    echo "  → Detected: $(platform)"
+  fi
+  echo ""
+
+  # Step 2: Antigravity IDE Check
+  print_info "Step 2: Checking Antigravity IDE Executable..."
+  local app_path
+  if app_path=$(find_app 2>/dev/null); then
+    echo "  ✓ Antigravity found at: $app_path"
+  else
+    echo "  ! Antigravity was not auto-detected on PATH."
+    read -r -p "  Enter path/command for Antigravity executable (press Enter to skip): " custom_app
+    if [ -n "$custom_app" ]; then
+      export MULTIGRAVITY_APP="$custom_app"
+      echo "  ✓ Set MULTIGRAVITY_APP=$custom_app"
+    fi
+  fi
+  echo ""
+
+  # Step 3: Initial Profile Setup
+  print_info "Step 3: Initial Profile Setup..."
+  read -r -p "  Would you like to create a new profile now? [Y/n]: " create_prof
+  create_prof="${create_prof:-y}"
+  if [[ "$create_prof" =~ ^[Yy]$ ]]; then
+    read -r -p "  Enter profile name (default: work): " p_name
+    p_name="${p_name:-work}"
+    if validate_name "$p_name" 2>/dev/null; then
+      read -r -p "  Create as shared profile (shared extensions & settings)? [y/N]: " is_shared
+      if [[ "$is_shared" =~ ^[Yy]$ ]]; then
+        cmd_new "$p_name" "--shared"
+      else
+        cmd_new "$p_name"
+      fi
+    else
+      echo "  Invalid profile name. You can create one later using: mgy new <name>"
+    fi
+  fi
+  echo ""
+
+  # Step 4: Shell Integration
+  print_info "Step 4: Shell Integration..."
+  read -r -p "  Show shell completion setup instructions? [Y/n]: " do_comp
+  do_comp="${do_comp:-y}"
+  if [[ "$do_comp" =~ ^[Yy]$ ]]; then
+    help_completion
+  fi
+
+  echo ""
+  echo "=================================================="
+  echo "  ✓ Setup Complete! Enjoy using Multigravity (mgy)"
+  echo "=================================================="
+}
+
 profile_stats() {
   if [ ! -d "$BASE" ]; then
     print_info "No profiles found."
@@ -1000,6 +1064,7 @@ Commands:
   import <archive> [name]     Restore a profile from a tar.gz archive
   update                      Update multigravity to the latest version
   doctor                      Run a system diagnosis
+  setup                       Run interactive setup wizard
   stats                       Show storage usage per profile
   completion                  Show setup instructions for shell completion
   <name> [args...]            Launch Antigravity with the given profile
@@ -1048,6 +1113,9 @@ case "$cmd" in
     ;;
   doctor)
     doctor_cli
+    ;;
+  setup)
+    cmd_setup
     ;;
   stats)
     profile_stats

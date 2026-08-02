@@ -74,6 +74,7 @@ function Write-Usage {
     Write-Host "  import <archive> [name]     Restore a profile from a .zip archive"
     Write-Host "  update                      Update multigravity to the latest version"
     Write-Host "  doctor                      Run a system diagnosis"
+    Write-Host "  setup                       Run interactive setup wizard"
     Write-Host "  stats                       Show storage usage per profile"
     Write-Host "  completion                  Show setup instructions for shell completion"
     Write-Host "  <name>                      Launch Antigravity with the given profile"
@@ -375,7 +376,56 @@ function Invoke-ProfileStats {
     Write-Host "Total usage: $total"
 }
 
-function Invoke-DoctorCli {
+function Invoke-SetupWizard {
+    Write-Host "=================================================="
+    Write-Host "  Multigravity Interactive Setup Wizard"
+    Write-Host "=================================================="
+    Write-Host ""
+
+    Write-Host "Step 1: Checking Environment..."
+    Write-Host "  -> Detected: Windows (PowerShell)"
+    Write-Host ""
+
+    Write-Host "Step 2: Checking Antigravity IDE Executable..."
+    if ($APP -and (Test-Path $APP)) {
+        Write-Host "  [OK] Antigravity found at: $APP"
+    } else {
+        Write-Host "  [!] Antigravity was not auto-detected on PATH."
+        $customApp = Read-Host "  Enter path to Antigravity executable (press Enter to skip)"
+        if ($customApp) {
+            $env:MULTIGRAVITY_APP = $customApp
+            Write-Host "  [OK] Set MULTIGRAVITY_APP=$customApp"
+        }
+    }
+    Write-Host ""
+
+    Write-Host "Step 3: Initial Profile Setup..."
+    $createProf = Read-Host "  Would you like to create a new profile now? [Y/n]"
+    if (-not $createProf -or $createProf -match "^[Yy]$") {
+        $pName = Read-Host "  Enter profile name (default: work)"
+        if (-not $pName) { $pName = "work" }
+        if (Validate-Name $pName) {
+            $isShared = Read-Host "  Create as shared profile (shared extensions & settings)? [y/N]"
+            if ($isShared -match "^[Yy]$") {
+                Invoke-NewProfile $pName "--shared"
+            } else {
+                Invoke-NewProfile $pName
+            }
+        }
+    }
+    Write-Host ""
+
+    Write-Host "Step 4: Shell Integration..."
+    $doComp = Read-Host "  Show shell completion instructions? [Y/n]"
+    if (-not $doComp -or $doComp -match "^[Yy]$") {
+        Invoke-HelpCompletion
+    }
+
+    Write-Host ""
+    Write-Host "=================================================="
+    Write-Host "  [OK] Setup Complete! Enjoy using Multigravity (mgy)"
+    Write-Host "=================================================="
+}
     $errors = 0
     $warnings = 0
 
@@ -645,6 +695,9 @@ switch ($cmd) {
     }
     "doctor" {
         Invoke-DoctorCli
+    }
+    "setup" {
+        Invoke-SetupWizard
     }
     "stats" {
         Invoke-ProfileStats
