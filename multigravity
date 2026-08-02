@@ -737,10 +737,22 @@ cmd_setup() {
 
   # Step 4: Shell Integration
   print_info "Step 4: Shell Integration..."
-  read -r -p "  Show shell completion setup instructions? [Y/n]: " do_comp
+  read -r -p "  Automatically add shell autocompletion to your shell profile (~/.bashrc)? [Y/n]: " do_comp
   do_comp="${do_comp:-y}"
   if [[ "$do_comp" =~ ^[Yy]$ ]]; then
-    help_completion
+    local target_rc="$HOME/.bashrc"
+    if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
+      target_rc="$HOME/.zshrc"
+    fi
+    touch "$target_rc"
+    if ! grep -q "mgy completion" "$target_rc" 2>/dev/null; then
+      echo '' >> "$target_rc"
+      echo '# Multigravity CLI shell autocompletion' >> "$target_rc"
+      echo 'source <(mgy completion bash 2>/dev/null || multigravity completion bash)' >> "$target_rc"
+      echo "  ✓ Autocompletion added to $target_rc"
+    else
+      echo "  ✓ Autocompletion is already present in $target_rc"
+    fi
   fi
 
   echo ""
