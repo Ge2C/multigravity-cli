@@ -470,15 +470,30 @@ is_cli_app() {
 }
 
 # Returns the real system home directory, unaffected by profile HOME overrides.
-# On Termux the real home is always the Termux files home.
+#
+# Resolution order:
+#   1. MULTIGRAVITY_REAL_HOME — set by the outermost _run_in_profile_env call;
+#      preserved across nested profile launches.
+#   2. Termux  — derived from $PREFIX (always set by Termux), never hardcoded.
+#      e.g. PREFIX=/data/data/com.termux/files/usr  -> home = .../files/home
+#   3. Standard Linux/macOS — $HOME as it exists before any profile override.
 _real_home() {
-  if is_termux; then
-    printf '/data/data/com.termux/files/home'
-  else
-    # Outside Termux: use the HOME that was set before multigravity launched.
-    # MULTIGRAVITY_REAL_HOME is set once on first launch (see _run_in_profile_env).
-    printf '%s' "${MULTIGRAVITY_REAL_HOME:-$HOME}"
+  # Already snapshotted by a parent _run_in_profile_env — reuse it.
+  if [ -n "${MULTIGRAVITY_REAL_HOME:-}" ]; then
+    printf '%s' "$MULTIGRAVITY_REAL_HOME"
+    return 0
   fi
+
+  if is_termux && [ -n "${PREFIX:-}" ]; then
+    # PREFIX is guaranteed by Termux. Strip the trailing /usr component to get
+    # the files/ directory, then append /home.
+    printf '%s/home' "${PREFIX%/usr}"
+    return 0
+  fi
+
+  # Standard Linux or macOS: use the current HOME (not yet overridden at this
+  # point since _real_home is always called before HOME= is applied).
+  printf '%s' "$HOME"
 }
 
 _run_in_profile_env() {
