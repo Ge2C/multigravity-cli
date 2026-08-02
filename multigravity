@@ -1036,7 +1036,7 @@ _multigravity_completions() {
             ;;
     esac
 }
-complete -F _multigravity_completions multigravity
+complete -F _multigravity_completions multigravity mgy
 EOF
       ;;
   esac
