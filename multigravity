@@ -737,11 +737,11 @@ cmd_setup() {
     p_name="${p_name:-work}"
     if validate_name "$p_name" 2>/dev/null; then
       read -r -p "  Create as shared profile (shared extensions & settings)? [y/N]: " is_shared
-      if [[ "$is_shared" =~ ^[Yy]$ ]]; then
-        new_profile "$p_name" "--shared"
-      else
-        new_profile "$p_name"
-      fi
+      read -r -p "  Seed from existing default logged-in session? [y/N]: " from_default
+      local extra_args=()
+      if [[ "$is_shared" =~ ^[Yy]$ ]]; then extra_args+=("--shared"); fi
+      if [[ "$from_default" =~ ^[Yy]$ ]]; then extra_args+=("--from" "default"); fi
+      new_profile "$p_name" "${extra_args[@]}"
     else
       echo "  Invalid profile name. You can create one later using: mgy new <name>"
     fi

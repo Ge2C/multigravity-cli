@@ -421,11 +421,11 @@ function Invoke-SetupWizard {
         if (-not $pName) { $pName = "work" }
         if (Validate-Name $pName) {
             $isShared = Read-Host "  Create as shared profile (shared extensions & settings)? [y/N]"
-            if ($isShared -match "^[Yy]$") {
-                Invoke-NewProfile $pName "--shared"
-            } else {
-                Invoke-NewProfile $pName
-            }
+            $fromDef  = Read-Host "  Seed from existing default logged-in session? [y/N]"
+            $opts = @()
+            if ($isShared -match "^[Yy]$") { $opts += "--shared" }
+            if ($fromDef  -match "^[Yy]$") { $opts += "--from"; $opts += "default" }
+            Invoke-NewProfile $pName $opts
         }
     }
     Write-Host ""
