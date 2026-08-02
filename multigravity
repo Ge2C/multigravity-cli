@@ -532,40 +532,56 @@ _run_in_profile_env() {
   # On macOS the Keychain handles credentials independently of HOME regardless.
   local tool_env=()
   if [ "$(platform)" = "linux" ] && _profile_path_is_shared "$profile_path"; then
-    # Snapshot real home once so child processes inherit it after HOME is overridden.
+    # SHARED PROFILE: developer tools must be transparent to the user.
+    #
+    # Strategy:
+    #   a) XDG dirs → real home. Any tool that follows the XDG Base Directory
+    #      spec (gh, pip, docker, kubectl, azure-cli, stripe-cli, …) will
+    #      automatically find its config/data/cache without being listed here.
+    #      New tools installed in future just work with no code changes needed.
+    #
+    #   b) HOME-based tools (git, ssh, gpg, npm, go, cargo, aws, …) that
+    #      hard-code $HOME paths rather than respecting XDG still need explicit
+    #      env var overrides because HOME is redirected to the profile dir.
+    #
+    #   c) AGY session stays isolated via GEMINI_CLI_HOME / ANTIGRAVITY_CONFIG_DIR
+    #      (set below, after the tool_env block).
+    #
+    # Snapshot real home so child processes inherit it.
     tool_env+=(MULTIGRAVITY_REAL_HOME="$real_home")
 
-    # GitHub CLI — OAuth token / host config
-    tool_env+=(GH_CONFIG_DIR="${GH_CONFIG_DIR:-$real_home/.config/gh}")
+    # (a) XDG dirs → real home (covers all XDG-compliant tools automatically)
+    tool_env+=(XDG_CONFIG_HOME="${XDG_CONFIG_HOME_REAL:-$real_home/.config}")
+    tool_env+=(XDG_DATA_HOME="${XDG_DATA_HOME_REAL:-$real_home/.local/share}")
+    tool_env+=(XDG_CACHE_HOME="${XDG_CACHE_HOME_REAL:-$real_home/.cache}")
+    tool_env+=(XDG_STATE_HOME="${XDG_STATE_HOME_REAL:-$real_home/.local/state}")
 
-    # Git — global config and credential helper
+    # (b) Explicit overrides for HOME-based (non-XDG) tools
+    # Git — uses $HOME/.gitconfig, not XDG
     tool_env+=(GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$real_home/.gitconfig}")
     tool_env+=(GIT_CONFIG_SYSTEM="${GIT_CONFIG_SYSTEM:-/etc/gitconfig}")
-
-    # SSH — keys and known_hosts
+    # SSH — uses $HOME/.ssh
     tool_env+=(SSH_DIR="${SSH_DIR:-$real_home/.ssh}")
-
-    # GPG — signing keys
+    # GPG — uses $HOME/.gnupg
     tool_env+=(GNUPGHOME="${GNUPGHOME:-$real_home/.gnupg}")
-
-    # npm / Node
+    # npm — uses $HOME/.npmrc
     tool_env+=(NPM_CONFIG_USERCONFIG="${NPM_CONFIG_USERCONFIG:-$real_home/.npmrc}")
-
-    # Go toolchain
+    # Go — uses $HOME/go and $HOME/.config/go (XDG for env but GOPATH is HOME-based)
     tool_env+=(GOPATH="${GOPATH:-$real_home/go}")
     tool_env+=(GOENV="${GOENV:-$real_home/.config/go/env}")
-
-    # Rust / Cargo
+    # Rust / Cargo — uses $HOME/.cargo
     tool_env+=(CARGO_HOME="${CARGO_HOME:-$real_home/.cargo}")
-
-    # pip / Python user site
+    # Python / pip user site — uses $HOME/.local
     tool_env+=(PYTHONUSERBASE="${PYTHONUSERBASE:-$real_home/.local}")
-
-    # AWS CLI
+    # AWS CLI — uses $HOME/.aws
     tool_env+=(AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$real_home/.aws/config}")
     tool_env+=(AWS_SHARED_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$real_home/.aws/credentials}")
+    # Docker — uses $HOME/.docker (though also respects DOCKER_CONFIG=XDG path)
+    tool_env+=(DOCKER_CONFIG="${DOCKER_CONFIG:-$real_home/.docker}")
+    # kubectl — uses $HOME/.kube
+    tool_env+=(KUBECONFIG="${KUBECONFIG:-$real_home/.kube/config}")
 
-    # Ensure real home's ~/.local/bin is on PATH so globally installed tools are found
+    # Ensure real home's ~/.local/bin is on PATH
     if [[ ":$PATH:" != *":$real_home/.local/bin:"* ]]; then
       tool_env+=(PATH="$real_home/.local/bin:$PATH")
     fi
