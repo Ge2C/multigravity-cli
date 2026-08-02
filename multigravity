@@ -469,11 +469,78 @@ is_cli_app() {
   esac
 }
 
+# Returns the real system home directory, unaffected by profile HOME overrides.
+# On Termux the real home is always the Termux files home.
+_real_home() {
+  if is_termux; then
+    printf '/data/data/com.termux/files/home'
+  else
+    # Outside Termux: use the HOME that was set before multigravity launched.
+    # MULTIGRAVITY_REAL_HOME is set once on first launch (see _run_in_profile_env).
+    printf '%s' "${MULTIGRAVITY_REAL_HOME:-$HOME}"
+  fi
+}
+
 _run_in_profile_env() {
   # Runs "$@" inside the profile's fully isolated environment.
   # Usage: _run_in_profile_env <profile_path> <cmd> [args...]
+  #
+  # Antigravity-specific dirs (HOME, XDG_*) are redirected into the profile so
+  # each profile gets its own Antigravity session, extensions, and config.
+  #
+  # Developer tools (gh, git, npm, go, cargo, ssh, pip, …) must NOT be isolated
+  # because they store credentials and global settings in the real system home.
+  # We pin each tool's config env var back to the real home so switching profiles
+  # never breaks authenticated CLI tools.
   local profile_path=$1
   shift
+
+  local real_home
+  real_home="$(_real_home)"
+
+  # Build the tool-passthrough vars only when running on Linux/Termux.
+  # On macOS the Keychain handles credentials independently of HOME.
+  local tool_env=()
+  if [ "$(platform)" = "linux" ]; then
+    # Snapshot real home once so child processes inherit it after HOME is overridden.
+    tool_env+=(MULTIGRAVITY_REAL_HOME="$real_home")
+
+    # GitHub CLI — stores OAuth token / host config
+    tool_env+=(GH_CONFIG_DIR="${GH_CONFIG_DIR:-$real_home/.config/gh}")
+
+    # Git — global config and credential helper
+    tool_env+=(GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$real_home/.gitconfig}")
+    tool_env+=(GIT_CONFIG_SYSTEM="${GIT_CONFIG_SYSTEM:-/etc/gitconfig}")
+
+    # SSH — keys and known_hosts
+    tool_env+=(SSH_DIR="${SSH_DIR:-$real_home/.ssh}")
+
+    # GPG — signing keys
+    tool_env+=(GNUPGHOME="${GNUPGHOME:-$real_home/.gnupg}")
+
+    # npm / Node
+    tool_env+=(NPM_CONFIG_USERCONFIG="${NPM_CONFIG_USERCONFIG:-$real_home/.npmrc}")
+
+    # Go toolchain
+    tool_env+=(GOPATH="${GOPATH:-$real_home/go}")
+    tool_env+=(GOENV="${GOENV:-$real_home/.config/go/env}")
+
+    # Rust / Cargo
+    tool_env+=(CARGO_HOME="${CARGO_HOME:-$real_home/.cargo}")
+
+    # pip / Python user site
+    tool_env+=(PYTHONUSERBASE="${PYTHONUSERBASE:-$real_home/.local}")
+
+    # AWS CLI
+    tool_env+=(AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$real_home/.aws/config}")
+    tool_env+=(AWS_SHARED_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$real_home/.aws/credentials}")
+
+    # Ensure ~/.local/bin from real home is on PATH so globally installed tools are found
+    if [[ ":$PATH:" != *":$real_home/.local/bin:"* ]]; then
+      tool_env+=(PATH="$real_home/.local/bin:$PATH")
+    fi
+  fi
+
   HOME="$profile_path" \
   GEMINI_HOME="$profile_path/.gemini" \
   GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
@@ -482,6 +549,7 @@ _run_in_profile_env() {
   XDG_CACHE_HOME="$profile_path/.cache" \
   XDG_DATA_HOME="$profile_path/.local/share" \
   XDG_STATE_HOME="$profile_path/.local/state" \
+  "${tool_env[@]}" \
   "$@"
 }
 
