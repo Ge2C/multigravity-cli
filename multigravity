@@ -526,16 +526,19 @@ new_profile() {
   if [ "$from_tpl" = "default" ]; then
     local sys_data data_dir
     sys_data="$(system_user_data_dir)"
-    [ -d "$sys_data" ] || abort "Default Antigravity installation data not found at $sys_data"
-    print_info "Creating profile '$profile' seeded from default Antigravity installation..."
     if [ "$shared" = true ]; then
       create_shared_layout "$profile_path"
     else
       create_profile_layout "$profile_path"
     fi
-    data_dir="$(user_data_dir "$profile_path")"
-    mkdir -p "$data_dir"
-    cp -R "$sys_data/"* "$data_dir/" 2>/dev/null || true
+    if [ -d "$sys_data" ]; then
+      print_info "Seeding profile '$profile' from default Antigravity installation..."
+      data_dir="$(user_data_dir "$profile_path")"
+      mkdir -p "$data_dir"
+      cp -R "$sys_data/"* "$data_dir/" 2>/dev/null || true
+    else
+      print_info "Default session data not found at $sys_data. Initialized clean profile."
+    fi
   elif [ -n "$from_tpl" ]; then
     local tpl_path
     tpl_path="$(templates_dir)/$from_tpl"
