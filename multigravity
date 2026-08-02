@@ -1045,7 +1045,80 @@ EOF
 
 
 usage() {
-  cat <<EOF
+  local cols
+  cols=$(tput cols 2>/dev/null || true)
+  if [ -z "$cols" ] || [ "$cols" -le 0 ] 2>/dev/null; then
+    cols=$(stty size 2>/dev/null | awk '{print $2}' || true)
+  fi
+  cols="${cols:-${COLUMNS:-80}}"
+
+  if is_termux || [ "$cols" -lt 75 ]; then
+    cat <<EOF
+Usage: mgy <command> [args]
+
+Commands:
+  new <name> [options]
+    Create a new profile
+    --shared: Share settings & extensions
+    --from <tpl>: Seed from a template
+
+  list
+    List existing profiles
+
+  status
+    Show state, type & storage size
+
+  rename <old> <new>
+    Rename a profile
+
+  delete <name>
+    Delete a profile & data
+
+  clone <src> <dest>
+    Copy an existing profile
+
+  template save <prof> <name>
+    Save profile as reusable template
+
+  template list
+    List saved templates
+
+  template delete <name>
+    Remove a template
+
+  export <name> [path]
+    Archive profile to tar.gz
+
+  import <archive> [name]
+    Restore profile from archive
+
+  setup
+    Run interactive setup wizard
+
+  doctor
+    Run environment diagnosis
+
+  stats
+    Show disk usage per profile
+
+  update
+    Update to latest version
+
+  completion
+    Shell completion setup
+
+  <name> [args...]
+    Launch Antigravity with profile
+
+  help
+    Show this help
+
+Environment:
+  MULTIGRAVITY_APP   Override app path
+  MULTIGRAVITY_HOME  Override storage dir
+EOF
+  else
+    cat <<EOF
 Usage: multigravity (or mgy) <command> [args]
 
 Commands:
@@ -1076,6 +1149,7 @@ Environment:
   MULTIGRAVITY_APP      Override the Antigravity app path or command
   MULTIGRAVITY_HOME     Override the profile storage directory
 EOF
+  fi
 }
 
 case "$cmd" in
