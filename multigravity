@@ -725,9 +725,9 @@ cmd_setup() {
     if validate_name "$p_name" 2>/dev/null; then
       read -r -p "  Create as shared profile (shared extensions & settings)? [y/N]: " is_shared
       if [[ "$is_shared" =~ ^[Yy]$ ]]; then
-        cmd_new "$p_name" "--shared"
+        new_profile "$p_name" "--shared"
       else
-        cmd_new "$p_name"
+        new_profile "$p_name"
       fi
     else
       echo "  Invalid profile name. You can create one later using: mgy new <name>"
