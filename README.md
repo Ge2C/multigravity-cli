@@ -66,6 +66,7 @@ Each profile gets an automatic clickable launcher:
 | `multigravity new <name>` | Create a new full profile |
 | `multigravity new <name> --shared` | Create a lightweight profile (shared extensions & settings, isolated accounts) |
 | `multigravity new <name> --from <template>` | Create a profile from a saved template |
+| `multigravity new <name> --from default` | Create a profile seeded from your default logged-in session |
 | `multigravity <name>` | Launch a profile |
 | `multigravity list` | List all profiles |
 | `multigravity status` | Show running state, type, last used, and size per profile |

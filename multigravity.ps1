@@ -243,7 +243,22 @@ function Invoke-NewProfile {
 
     New-Item -ItemType Directory -Force -Path $BASE | Out-Null
 
-    if ($fromTpl) {
+    if ($fromTpl -eq "default") {
+        $sysData = Get-SystemDataDir
+        if (!(Test-Path $sysData)) {
+            Write-Error "Error: default Antigravity installation data not found at $sysData"
+            exit 1
+        }
+        Write-Host "Creating profile '$name' seeded from default Antigravity installation..."
+        if ($shared) {
+            Invoke-CreateSharedProfile $name
+        } else {
+            Invoke-CreateProfile $name
+        }
+        $userDataDir = "$profileDir\AppData\Roaming\Antigravity"
+        New-Item -ItemType Directory -Force -Path $userDataDir | Out-Null
+        Copy-Item -Path "$sysData\*" -Destination $userDataDir -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif ($fromTpl) {
         $tplPath = "$(Get-TemplatesDir)\$fromTpl"
         if (!(Test-Path $tplPath)) {
             Write-Error "Error: template '$fromTpl' not found. Run: multigravity template list"
