@@ -212,6 +212,7 @@ create_profile_layout() {
       ;;
     linux)
       mkdir -p \
+        "$profile_path/.gemini/antigravity-cli" \
         "$profile_path/.config/Antigravity" \
         "$profile_path/.cache" \
         "$profile_path/.local/share" \
@@ -263,6 +264,8 @@ create_shared_layout() {
       ;;
     linux)
       mkdir -p \
+        "$profile_path/.gemini/antigravity-cli" \
+        "$profile_path/.config/Antigravity" \
         "$profile_path/.cache" \
         "$profile_path/.local/share" \
         "$profile_path/.local/state"
@@ -450,15 +453,24 @@ launch_profile() {
 
   print_info "Launching Antigravity profile '$profile'"
 
+  mkdir -p "$profile_path/.gemini/antigravity-cli"
+
   case "$(platform)" in
     darwin)
-      HOME="$profile_path" open -n "$app" --args \
+      HOME="$profile_path" \
+      GEMINI_HOME="$profile_path/.gemini" \
+      GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
+      ANTIGRAVITY_CONFIG_DIR="$profile_path/.gemini/antigravity-cli" \
+      open -n "$app" --args \
         --user-data-dir "$data_dir" \
         --extensions-dir "$ext_dir" \
         "$@"
       ;;
     linux)
       HOME="$profile_path" \
+      GEMINI_HOME="$profile_path/.gemini" \
+      GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
+      ANTIGRAVITY_CONFIG_DIR="$profile_path/.gemini/antigravity-cli" \
       XDG_CONFIG_HOME="$profile_path/.config" \
       XDG_CACHE_HOME="$profile_path/.cache" \
       XDG_DATA_HOME="$profile_path/.local/share" \
