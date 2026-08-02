@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/data/data/com.termux/files/usr/bin/env bash
 set -euo pipefail
 
 shopt -s nullglob
@@ -15,26 +15,28 @@ print_info() {
   echo "$1"
 }
 
+# Cached platform result — set on first call to avoid repeated uname forks.
+_PLATFORM=""
+
 platform() {
-  local raw
-  raw="${MULTIGRAVITY_PLATFORM-}"
-  if [ -z "$raw" ]; then
-    raw="$(uname -s)"
+  if [ -n "$_PLATFORM" ]; then
+    printf '%s\n' "$_PLATFORM"
+    return 0
   fi
 
+  local raw
+  raw="${MULTIGRAVITY_PLATFORM-}"
+  [ -z "$raw" ] && raw="$(uname -s)"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
 
   case "$raw" in
-    darwin | macos | mac | osx)
-      printf '%s\n' "darwin"
-      ;;
-    linux)
-      printf '%s\n' "linux"
-      ;;
+    darwin | macos | mac | osx) _PLATFORM="darwin" ;;
+    linux)                       _PLATFORM="linux"  ;;
     *)
       abort "unsupported platform '$raw'. Multigravity supports macOS and Linux."
       ;;
   esac
+  printf '%s\n' "$_PLATFORM"
 }
 
 is_termux() {
@@ -135,12 +137,11 @@ command_or_path() {
 }
 
 find_app() {
-  local override candidate
+  local override candidate resolved
 
   override="${MULTIGRAVITY_APP-}"
-  if [ -n "$override" ] && command_or_path "$override" >/dev/null 2>&1; then
-    command_or_path "$override"
-    return 0
+  if [ -n "$override" ]; then
+    resolved="$(command_or_path "$override" 2>/dev/null)" && printf '%s\n' "$resolved" && return 0
   fi
 
   case "$(platform)" in
@@ -168,10 +169,7 @@ find_app() {
         "$HOME/.local/bin/agy" \
         "$HOME/Applications/Antigravity.AppImage"
       do
-        if command_or_path "$candidate" >/dev/null 2>&1; then
-          command_or_path "$candidate"
-          return 0
-        fi
+        resolved="$(command_or_path "$candidate" 2>/dev/null)" && printf '%s\n' "$resolved" && return 0
       done
       ;;
   esac
@@ -196,6 +194,17 @@ require_app() {
   printf '%s\n' "$app"
 }
 
+_mk_linux_profile_dirs() {
+  # Creates the standard Linux XDG directory tree inside a profile directory.
+  local profile_path=$1
+  mkdir -p \
+    "$profile_path/.gemini/antigravity-cli" \
+    "$profile_path/.config/Antigravity" \
+    "$profile_path/.cache" \
+    "$profile_path/.local/share" \
+    "$profile_path/.local/state"
+}
+
 create_profile_layout() {
   local profile_path=$1
 
@@ -211,12 +220,7 @@ create_profile_layout() {
       fi
       ;;
     linux)
-      mkdir -p \
-        "$profile_path/.gemini/antigravity-cli" \
-        "$profile_path/.config/Antigravity" \
-        "$profile_path/.cache" \
-        "$profile_path/.local/share" \
-        "$profile_path/.local/state"
+      _mk_linux_profile_dirs "$profile_path"
       ;;
   esac
 }
@@ -255,6 +259,20 @@ create_shared_layout() {
     mkdir -p "$ext_dir"
   fi
 
+  # Share Antigravity CLI plugins, skills & config
+  if [ -d "$HOME/.gemini/config" ]; then
+    mkdir -p "$profile_path/.gemini/config"
+    local item
+    for item in plugins mcp_config.json config.json; do
+      if [ -e "$HOME/.gemini/config/$item" ]; then
+        if [ ! -L "$profile_path/.gemini/config/$item" ]; then
+          rm -rf "$profile_path/.gemini/config/$item"
+          ln -s "$HOME/.gemini/config/$item" "$profile_path/.gemini/config/$item"
+        fi
+      fi
+    done
+  fi
+
   case "$(platform)" in
     darwin)
       mkdir -p "$profile_path/Library/Application Support"
@@ -263,12 +281,7 @@ create_shared_layout() {
       fi
       ;;
     linux)
-      mkdir -p \
-        "$profile_path/.gemini/antigravity-cli" \
-        "$profile_path/.config/Antigravity" \
-        "$profile_path/.cache" \
-        "$profile_path/.local/share" \
-        "$profile_path/.local/state"
+      _mk_linux_profile_dirs "$profile_path"
       ;;
   esac
 }
@@ -276,7 +289,8 @@ create_shared_layout() {
 script_path() {
   local installed dir
 
-  installed="$(command -v multigravity 2>/dev/null || true)"
+  # Prefer the canonical name; fall back to the mgy alias (Termux installs as mgy only)
+  installed="$(command -v multigravity 2>/dev/null || command -v mgy 2>/dev/null || true)"
   if [ -n "$installed" ]; then
     printf '%s\n' "$installed"
     return 0
@@ -352,6 +366,11 @@ EOF
 }
 
 create_shortcut_linux() {
+  # No desktop environment on Termux — skip shortcut creation entirely.
+  if is_termux; then
+    return 0
+  fi
+
   local profile=$1
   local launcher_root
   local launcher_path
@@ -416,40 +435,77 @@ remove_shortcut() {
       fi
       ;;
     linux)
-      target="$(linux_launcher_path "$profile")"
-      if [ -f "$target" ]; then
-        rm -f "$target"
-        print_info "Removed shortcut: $target"
-      fi
+      # No desktop environment on Termux — nothing to remove.
+      if ! is_termux; then
+        target="$(linux_launcher_path "$profile")"
+        if [ -f "$target" ]; then
+          rm -f "$target"
+          print_info "Removed shortcut: $target"
+        fi
 
-      target="$(linux_desktop_path "$profile")"
-      if [ -f "$target" ]; then
-        rm -f "$target"
-        print_info "Removed shortcut: $target"
+        target="$(linux_desktop_path "$profile")"
+        if [ -f "$target" ]; then
+          rm -f "$target"
+          print_info "Removed shortcut: $target"
+        fi
       fi
       ;;
   esac
+}
+
+is_cli_app() {
+  # Returns 0 (true) when the resolved app is the agy/antigravity CLI binary.
+  # The CLI does not accept --user-data-dir / --extensions-dir (IDE-only flags).
+  local app_path=$1
+  local app_name
+  app_name="$(basename "$app_path")"
+  case "$app_name" in
+    agy | agy.* | antigravity | antigravity-cli)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_run_in_profile_env() {
+  # Runs "$@" inside the profile's fully isolated environment.
+  # Usage: _run_in_profile_env <profile_path> <cmd> [args...]
+  local profile_path=$1
+  shift
+  HOME="$profile_path" \
+  GEMINI_HOME="$profile_path/.gemini" \
+  GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
+  ANTIGRAVITY_CONFIG_DIR="$profile_path/.gemini/antigravity-cli" \
+  XDG_CONFIG_HOME="$profile_path/.config" \
+  XDG_CACHE_HOME="$profile_path/.cache" \
+  XDG_DATA_HOME="$profile_path/.local/share" \
+  XDG_STATE_HOME="$profile_path/.local/state" \
+  "$@"
 }
 
 launch_profile() {
   local profile=$1
   shift || true
 
-  local profile_path
-  local app
-  local data_dir
-  local ext_dir
+  local profile_path app data_dir ext_dir
 
   profile_path="$(profile_dir "$profile")"
   if [ ! -d "$profile_path" ]; then
     abort "profile '$profile' does not exist. Run: multigravity new $profile"
   fi
 
-  create_profile_layout "$profile_path"
-
   app="$(require_app)"
   data_dir="$(user_data_dir "$profile_path")"
   ext_dir="$(extensions_dir "$profile_path")"
+
+  # Initialize/sync layout
+  if is_shared_profile "$profile"; then
+    create_shared_layout "$profile_path"
+  elif [ ! -d "$ext_dir" ]; then
+    create_profile_layout "$profile_path"
+  fi
 
   print_info "Launching Antigravity profile '$profile'"
 
@@ -457,28 +513,24 @@ launch_profile() {
 
   case "$(platform)" in
     darwin)
-      HOME="$profile_path" \
-      GEMINI_HOME="$profile_path/.gemini" \
-      GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
-      ANTIGRAVITY_CONFIG_DIR="$profile_path/.gemini/antigravity-cli" \
-      open -n "$app" --args \
+      _run_in_profile_env "$profile_path" \
+        open -n "$app" --args \
         --user-data-dir "$data_dir" \
         --extensions-dir "$ext_dir" \
         "$@"
       ;;
     linux)
-      HOME="$profile_path" \
-      GEMINI_HOME="$profile_path/.gemini" \
-      GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
-      ANTIGRAVITY_CONFIG_DIR="$profile_path/.gemini/antigravity-cli" \
-      XDG_CONFIG_HOME="$profile_path/.config" \
-      XDG_CACHE_HOME="$profile_path/.cache" \
-      XDG_DATA_HOME="$profile_path/.local/share" \
-      XDG_STATE_HOME="$profile_path/.local/state" \
-      "$app" \
-        --user-data-dir "$data_dir" \
-        --extensions-dir "$ext_dir" \
-        "$@"
+      if is_cli_app "$app"; then
+        # agy CLI does not accept --user-data-dir / --extensions-dir (IDE-only flags).
+        # Profile isolation is achieved solely via the HOME override, which causes
+        # the CLI to resolve ~/.gemini/antigravity-cli inside the profile directory.
+        _run_in_profile_env "$profile_path" "$app" "$@"
+      else
+        _run_in_profile_env "$profile_path" "$app" \
+          --user-data-dir "$data_dir" \
+          --extensions-dir "$ext_dir" \
+          "$@"
+      fi
       ;;
   esac
 }
@@ -551,6 +603,11 @@ new_profile() {
       cp -R "$HOME/.gemini/antigravity-cli" "$profile_path/.gemini/" 2>/dev/null || true
       copied=true
     fi
+    if [ -d "$HOME/.gemini/config" ] && [ "$shared" = false ]; then
+      mkdir -p "$profile_path/.gemini"
+      cp -R "$HOME/.gemini/config" "$profile_path/.gemini/" 2>/dev/null || true
+      copied=true
+    fi
     if [ -d "$HOME/.config/Antigravity" ]; then
       mkdir -p "$profile_path/.config"
       cp -R "$HOME/.config/Antigravity" "$profile_path/.config/" 2>/dev/null || true
@@ -563,6 +620,8 @@ new_profile() {
     fi
   elif [ -n "$from_tpl" ]; then
     local tpl_path
+    # Validate template name to prevent path traversal (e.g. --from ../otherprofile)
+    validate_name "$from_tpl"
     tpl_path="$(templates_dir)/$from_tpl"
     [ -d "$tpl_path" ] || abort "template '$from_tpl' not found. Run: multigravity template list"
     print_info "Creating profile '$profile' from template '$from_tpl'..."
@@ -856,7 +915,7 @@ status_profiles() {
     fi
 
     local ptype="full"
-    [ -f "$dir/.shared" ] && ptype="shared"
+    is_shared_profile "$name" && ptype="shared"
 
     local last_used
     case "$(platform)" in
@@ -948,8 +1007,12 @@ import_profile() {
   [ -n "$archive" ] || abort "usage: multigravity import <archive.tar.gz> [name]"
   [ -f "$archive" ]  || abort "file not found: $archive"
 
+  # Read archive top-level directory once and reuse (avoids two separate tar reads)
+  local top_dir
+  top_dir="$(tar -tzf "$archive" 2>/dev/null | head -1 | cut -d'/' -f1)"
+
   if [ -z "$profile" ]; then
-    profile="$(tar -tzf "$archive" 2>/dev/null | head -1 | cut -d'/' -f1)"
+    profile="$top_dir"
     [ -n "$profile" ] || abort "cannot infer profile name from archive — pass a name explicitly"
   fi
 
@@ -962,8 +1025,6 @@ import_profile() {
   mkdir -p "$BASE"
   print_info "Importing as '$profile'..."
 
-  local top_dir
-  top_dir="$(tar -tzf "$archive" 2>/dev/null | head -1 | cut -d'/' -f1)"
   tar -xzf "$archive" -C "$BASE"
   if [ -n "$top_dir" ] && [ "$top_dir" != "$profile" ] && [ -d "$BASE/$top_dir" ]; then
     mv "$BASE/$top_dir" "$dest"
@@ -984,6 +1045,15 @@ update_cli() {
 
   print_info "Updating multigravity from $script_url ..."
   if curl -fsSL "$script_url" -o "$target.tmp"; then
+    # Integrity check: verify the download looks like a valid shell script before replacing.
+    if ! head -1 "$target.tmp" 2>/dev/null | grep -qE '^#!.*(env +[a-z]*sh|bash|sh)'; then
+      rm -f "$target.tmp"
+      abort "downloaded file does not appear to be a valid shell script — update aborted to prevent corruption"
+    fi
+    # On Termux, env is not at /usr/bin — patch the shebang to use the Termux path.
+    if is_termux; then
+      sed -i '1s|^#!/usr/bin/env|#!/data/data/com.termux/files/usr/bin/env|' "$target.tmp"
+    fi
     mv "$target.tmp" "$target"
     chmod +x "$target"
     print_info "Successfully updated multigravity!"
