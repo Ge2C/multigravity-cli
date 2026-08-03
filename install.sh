@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/env bash
 set -euo pipefail
 
 REPO="sujitagarwal/multigravity-cli"
@@ -59,16 +59,33 @@ elif [ ! -w "$INSTALL_DIR" ]; then
   fi
 fi
 
+USE_SYMLINK=false
+for arg in "$@"; do
+  if [ "$arg" = "--link" ] || [ "$arg" = "-l" ] || [ "$arg" = "--symlink" ]; then
+    USE_SYMLINK=true
+  fi
+done
+
 echo "Installing Multigravity to $INSTALL_DIR ..."
 
-# ── download multigravity script ─────────────────────────────────────────────
-print_step "Downloading multigravity..."
-curl -fsSL "$RAW/multigravity" -o "$INSTALL_DIR/multigravity"
-chmod +x "$INSTALL_DIR/multigravity"
+# ── download or link multigravity script ──────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$USE_SYMLINK" = true ] && [ -f "$SCRIPT_DIR/multigravity" ]; then
+  print_step "Linking local multigravity script from $SCRIPT_DIR/multigravity..."
+  chmod +x "$SCRIPT_DIR/multigravity"
+  if command -v termux-fix-shebang &>/dev/null; then
+    termux-fix-shebang "$SCRIPT_DIR/multigravity"
+  fi
+  ln -sf "$SCRIPT_DIR/multigravity" "$INSTALL_DIR/multigravity"
+else
+  print_step "Downloading multigravity..."
+  curl -fsSL "$RAW/multigravity" -o "$INSTALL_DIR/multigravity"
+  chmod +x "$INSTALL_DIR/multigravity"
 
-if command -v termux-fix-shebang &>/dev/null; then
-  print_step "Fixing shebang for Termux..."
-  termux-fix-shebang "$INSTALL_DIR/multigravity"
+  if command -v termux-fix-shebang &>/dev/null; then
+    print_step "Fixing shebang for Termux..."
+    termux-fix-shebang "$INSTALL_DIR/multigravity"
+  fi
 fi
 
 # ── create mgy alias symlink ──────────────────────────────────────────────────
