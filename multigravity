@@ -587,6 +587,7 @@ _run_in_profile_env() {
     fi
   fi
 
+  exec env \
   HOME="$profile_path" \
   GEMINI_HOME="$profile_path/.gemini" \
   GEMINI_CLI_HOME="$profile_path/.gemini/antigravity-cli" \
