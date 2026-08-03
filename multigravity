@@ -685,6 +685,11 @@ list_profiles() {
 new_profile() {
   local profile="" shared=false from_tpl=""
 
+  if [ $# -eq 0 ]; then
+    new_profile_wizard
+    return 0
+  fi
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --shared)       shared=true ;;
@@ -896,80 +901,72 @@ doctor_cli() {
   fi
 }
 
-cmd_setup() {
+new_profile_wizard() {
   echo "=================================================="
-  echo "  Multigravity Interactive Setup Wizard"
+  echo "  Multigravity Profile Creation Wizard"
   echo "=================================================="
   echo ""
 
-  # Step 1: Environment & Platform Check
-  print_info "Step 1: Checking Platform & Environment..."
-  if is_termux; then
-    echo "  → Detected: Termux (Android Linux)"
-  else
-    echo "  → Detected: $(platform)"
-  fi
-  echo ""
-
-  # Step 2: Antigravity IDE Check
-  print_info "Step 2: Checking Antigravity IDE Executable..."
-  local app_path
-  if app_path=$(find_app 2>/dev/null); then
-    echo "  ✓ Antigravity found at: $app_path"
-  else
-    echo "  ! Antigravity was not auto-detected on PATH."
-    read -r -p "  Enter path/command for Antigravity executable (press Enter to skip): " custom_app
-    if [ -n "$custom_app" ]; then
-      export MULTIGRAVITY_APP="$custom_app"
-      echo "  ✓ Set MULTIGRAVITY_APP=$custom_app"
-    fi
-  fi
-  echo ""
-
-  # Step 3: Initial Profile Setup
-  print_info "Step 3: Initial Profile Setup..."
-  read -r -p "  Would you like to create a new profile now? [Y/n]: " create_prof
-  create_prof="${create_prof:-y}"
-  if [[ "$create_prof" =~ ^[Yy]$ ]]; then
-    read -r -p "  Enter profile name (default: work): " p_name
-    p_name="${p_name:-work}"
-    if validate_name "$p_name" 2>/dev/null; then
-      read -r -p "  Create as shared profile (shared extensions & settings)? [y/N]: " is_shared
-      read -r -p "  Seed from existing default logged-in session? [y/N]: " from_default
-      local extra_args=()
-      if [[ "$is_shared" =~ ^[Yy]$ ]]; then extra_args+=("--shared"); fi
-      if [[ "$from_default" =~ ^[Yy]$ ]]; then extra_args+=("--from" "default"); fi
-      new_profile "$p_name" "${extra_args[@]}"
+  local p_name=""
+  while true; do
+    read -r -p "  Enter new profile name: " p_name
+    if [ -z "$p_name" ]; then
+      echo "  Error: Profile name cannot be empty."
+    elif ! validate_name "$p_name" 2>/dev/null; then
+      echo "  Error: Invalid profile name. Use alphanumeric characters, hyphens, or underscores."
+    elif [ -d "$(profile_dir "$p_name")" ]; then
+      echo "  Error: Profile '$p_name' already exists."
     else
-      echo "  Invalid profile name. You can create one later using: mgy new <name>"
+      break
     fi
+  done
+  echo ""
+
+  print_info "Profile Type:"
+  echo "  1) Isolated (Independent extensions, settings & session data)"
+  echo "  2) Shared (Shares global extensions & settings across profiles)"
+  read -r -p "  Select profile type [1/2, default: 1]: " p_type_choice
+  local is_shared=false
+  if [ "$p_type_choice" = "2" ]; then
+    is_shared=true
   fi
   echo ""
 
-  # Step 4: Shell Integration
-  print_info "Step 4: Shell Integration..."
-  local target_rc="$HOME/.bashrc"
-  if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
-    target_rc="$HOME/.zshrc"
-  fi
-  if grep -q "mgy completion" "$target_rc" 2>/dev/null; then
-    echo "  ✓ Autocompletion is already active in $target_rc"
-  else
-    read -r -p "  Automatically add shell autocompletion to your shell profile ($target_rc)? [Y/n]: " do_comp
-    do_comp="${do_comp:-y}"
-    if [[ "$do_comp" =~ ^[Yy]$ ]]; then
-      touch "$target_rc"
-      echo '' >> "$target_rc"
-      echo '# Multigravity CLI shell autocompletion' >> "$target_rc"
-      echo 'source <(mgy completion bash 2>/dev/null || multigravity completion bash)' >> "$target_rc"
-      echo "  ✓ Autocompletion added to $target_rc"
-    fi
+  print_info "Seed Profile Data From:"
+  echo "  1) Clean / Empty starting state"
+  echo "  2) Default logged-in Antigravity session"
+  echo "  3) A saved template"
+  read -r -p "  Select seed source [1/2/3, default: 1]: " seed_choice
+
+  local extra_args=()
+  if [ "$is_shared" = true ]; then
+    extra_args+=("--shared")
   fi
 
+  case "$seed_choice" in
+    2)
+      extra_args+=("--from" "default")
+      ;;
+    3)
+      local tpls
+      tpls="$(list_templates_raw 2>/dev/null || true)"
+      if [ -z "$tpls" ]; then
+        echo "  No saved templates found. Initializing clean profile."
+      else
+        echo "  Available templates:"
+        for t in $tpls; do
+          echo "    - $t"
+        done
+        read -r -p "  Enter template name: " selected_tpl
+        if [ -n "$selected_tpl" ]; then
+          extra_args+=("--from" "$selected_tpl")
+        fi
+      fi
+      ;;
+  esac
   echo ""
-  echo "=================================================="
-  echo "  ✓ Setup Complete! Enjoy using Multigravity (mgy)"
-  echo "=================================================="
+
+  new_profile "$p_name" "${extra_args[@]}"
 }
 
 profile_stats() {
@@ -1308,8 +1305,8 @@ usage() {
 Usage: mgy <command> [args]
 
 Commands:
-  new <name> [options]
-    Create a new profile
+  new [name] [options]
+    Create a new profile (runs interactive wizard if name omitted)
     --shared: Share settings & extensions
     --from <tpl>: Seed from a template
 
@@ -1343,9 +1340,6 @@ Commands:
   import <archive> [name]
     Restore profile from archive
 
-  setup
-    Run interactive setup wizard
-
   doctor
     Run environment diagnosis
 
@@ -1355,8 +1349,8 @@ Commands:
   update
     Update to latest version
 
-  completion
-    Shell completion setup
+  completion [install|shell]
+    Shell completion setup / install
 
   <name> [args...]
     Launch Antigravity with profile
@@ -1373,7 +1367,7 @@ EOF
 Usage: multigravity (or mgy) <command> [args]
 
 Commands:
-  new <name> [options]        Create a new profile + desktop shortcut
+  new [name] [options]        Create a profile (runs wizard if name omitted)
       --shared                Share extensions & settings; isolate only accounts
       --from <template>       Seed from a saved template
   list                        List existing profiles
@@ -1388,9 +1382,8 @@ Commands:
   import <archive> [name]     Restore a profile from a tar.gz archive
   update                      Update multigravity to the latest version
   doctor                      Run a system diagnosis
-  setup                       Run interactive setup wizard
   stats                       Show storage usage per profile
-  completion                  Show setup instructions for shell completion
+  completion [install|shell]  Show or install shell completion
   <name> [args...]            Launch Antigravity with the given profile
   help                        Show this help
 
@@ -1438,9 +1431,6 @@ case "$cmd" in
     ;;
   doctor)
     doctor_cli
-    ;;
-  setup)
-    cmd_setup
     ;;
   stats)
     profile_stats
