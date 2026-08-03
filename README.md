@@ -21,6 +21,12 @@ No more logging in and out. Launch as many profiles as you need, all at once.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sujitagarwal/multigravity-cli/main/install.sh)"
 ```
 
+Or install from a local git clone (with auto-updating symlinks):
+
+```bash
+./install.sh --link
+```
+
 **Windows** — open PowerShell and run:
 
 ```powershell
@@ -63,6 +69,7 @@ Each profile gets an automatic clickable launcher:
 
 | Command | Description |
 |---------|-------------|
+| `multigravity new` | Launch interactive profile creation wizard |
 | `multigravity new <name>` | Create a new full profile |
 | `multigravity new <name> --shared` | Create a lightweight profile (shared extensions & settings, isolated accounts) |
 | `multigravity new <name> --from <template>` | Create a profile from a saved template |
@@ -94,10 +101,10 @@ Each profile gets an automatic clickable launcher:
 | Command | Description |
 |---------|-------------|
 | `multigravity stats` | Show disk usage per profile |
-| `multigravity setup` | Run interactive setup wizard |
 | `multigravity doctor` | Diagnose your environment |
 | `multigravity update` | Update Multigravity to the latest version |
-| `multigravity completion` | Set up shell tab-completion |
+| `multigravity completion` | Show shell tab-completion setup |
+| `multigravity completion install` | Automatically install shell autocompletion |
 | `multigravity help` | Show help |
 
 ---
