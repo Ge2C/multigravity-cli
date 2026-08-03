@@ -948,21 +948,21 @@ cmd_setup() {
 
   # Step 4: Shell Integration
   print_info "Step 4: Shell Integration..."
-  read -r -p "  Automatically add shell autocompletion to your shell profile (~/.bashrc)? [Y/n]: " do_comp
-  do_comp="${do_comp:-y}"
-  if [[ "$do_comp" =~ ^[Yy]$ ]]; then
-    local target_rc="$HOME/.bashrc"
-    if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
-      target_rc="$HOME/.zshrc"
-    fi
-    touch "$target_rc"
-    if ! grep -q "mgy completion" "$target_rc" 2>/dev/null; then
+  local target_rc="$HOME/.bashrc"
+  if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
+    target_rc="$HOME/.zshrc"
+  fi
+  if grep -q "mgy completion" "$target_rc" 2>/dev/null; then
+    echo "  ✓ Autocompletion is already active in $target_rc"
+  else
+    read -r -p "  Automatically add shell autocompletion to your shell profile ($target_rc)? [Y/n]: " do_comp
+    do_comp="${do_comp:-y}"
+    if [[ "$do_comp" =~ ^[Yy]$ ]]; then
+      touch "$target_rc"
       echo '' >> "$target_rc"
       echo '# Multigravity CLI shell autocompletion' >> "$target_rc"
       echo 'source <(mgy completion bash 2>/dev/null || multigravity completion bash)' >> "$target_rc"
       echo "  ✓ Autocompletion added to $target_rc"
-    else
-      echo "  ✓ Autocompletion is already present in $target_rc"
     fi
   fi
 
@@ -1174,6 +1174,23 @@ update_cli() {
   else
     rm -f "$target.tmp"
     abort "failed to download update"
+  fi
+}
+
+install_completion() {
+  local target_rc="$HOME/.bashrc"
+  if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
+    target_rc="$HOME/.zshrc"
+  fi
+  touch "$target_rc"
+  if grep -q "mgy completion" "$target_rc" 2>/dev/null; then
+    echo "  ✓ Autocompletion is already active in $target_rc"
+  else
+    echo '' >> "$target_rc"
+    echo '# Multigravity CLI shell autocompletion' >> "$target_rc"
+    echo 'source <(mgy completion bash 2>/dev/null || multigravity completion bash)' >> "$target_rc"
+    echo "  ✓ Autocompletion added to $target_rc"
+    echo "  Run 'source $target_rc' or restart terminal to activate."
   fi
 }
 
@@ -1429,7 +1446,9 @@ case "$cmd" in
     profile_stats
     ;;
   completion)
-    if [ -n "${2-}" ]; then
+    if [ "${2-}" = "install" ]; then
+      install_completion
+    elif [ -n "${2-}" ]; then
       generate_completion "$2"
     else
       help_completion

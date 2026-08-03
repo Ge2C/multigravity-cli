@@ -98,6 +98,19 @@ if [ "$PLATFORM" = "darwin" ]; then
   curl -fsSL "$RAW/icon.icns" -o "$INSTALL_DIR/icon.icns"
 fi
 
+# ── configure shell autocompletion ───────────────────────────────────────────
+TARGET_RC="$HOME/.bashrc"
+if [ -n "${SHELL:-}" ] && [[ "$SHELL" == *"zsh"* ]]; then
+  TARGET_RC="$HOME/.zshrc"
+fi
+if ! grep -q "mgy completion" "$TARGET_RC" 2>/dev/null; then
+  print_step "Adding autocompletion to $TARGET_RC..."
+  touch "$TARGET_RC"
+  echo '' >> "$TARGET_RC"
+  echo '# Multigravity CLI shell autocompletion' >> "$TARGET_RC"
+  echo 'source <(mgy completion bash 2>/dev/null || multigravity completion bash)' >> "$TARGET_RC"
+fi
+
 echo ""
 echo "✓ Multigravity installed successfully!"
 echo ""
