@@ -68,7 +68,26 @@ if [ -d "$HOME/.gemini/config/plugins" ]; then
     exit 1
   fi
 fi
-echo "  ✓ Shared profile symlinks verified"
+
+# Verify auto-shared history symlink if system brain exists
+mkdir -p "$HOME/.gemini/antigravity-cli/brain"
+MULTIGRAVITY_HOME="$TEST_BASE" "$MULTIGRAVITY" new p-shared-hist --shared >/dev/null
+if [ -d "$HOME/.gemini/antigravity-cli/brain" ]; then
+  if [ ! -L "$TEST_BASE/p-shared-hist/.gemini/antigravity-cli/brain" ]; then
+    echo "  ✗ Auto-shared history (brain) symlink missing in shared profile!"
+    exit 1
+  fi
+fi
+
+# Verify mgy sync command between isolated profiles
+mkdir -p "$TEST_BASE/p-standard/.gemini/antigravity-cli/brain"
+echo "test-history-log" > "$TEST_BASE/p-standard/.gemini/antigravity-cli/brain/log.txt"
+MULTIGRAVITY_HOME="$TEST_BASE" "$MULTIGRAVITY" sync p-standard p-shared >/dev/null
+if [ ! -f "$TEST_BASE/p-shared/.gemini/antigravity-cli/brain/log.txt" ]; then
+  echo "  ✗ mgy sync failed to sync history between profiles!"
+  exit 1
+fi
+echo "  ✓ Shared profile symlinks and mgy sync verified"
 
 # 5. Security & Path Traversal Guard
 echo "[5/7] Testing path traversal protection..."

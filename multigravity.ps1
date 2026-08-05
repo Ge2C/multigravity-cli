@@ -138,6 +138,50 @@ function Invoke-CreateSharedProfile {
     } else {
         New-Item -ItemType Directory -Force -Path $extDir | Out-Null
     }
+
+    # Auto-share global NPM cache safely
+    $targetNpm = "$profileDir\.npm"
+    $sysNpm    = "$env:USERPROFILE\.npm"
+    if (Test-Path $sysNpm) {
+        if ((Test-Path $targetNpm) -and -not (Get-Item $targetNpm).Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            Copy-Item -Path "$targetNpm\*" -Destination "$sysNpm\" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $targetNpm -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ((Test-Path $targetNpm) -and -not (Get-Item $targetNpm).Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            Remove-Item -Path $targetNpm -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path $targetNpm)) {
+            New-Item -ItemType SymbolicLink -Path $targetNpm -Target $sysNpm -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
+
+    # Auto-share conversations index so sessions can be resumed across profiles
+    $targetConv = "$profileDir\.gemini\antigravity-cli\conversations"
+    $sysConv    = "$env:USERPROFILE\.gemini\antigravity-cli\conversations"
+    if (Test-Path $sysConv) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetConv) | Out-Null
+        if ((Test-Path $targetConv) -and -not (Get-Item $targetConv).Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            Copy-Item -Path "$targetConv\*" -Destination "$sysConv\" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $targetConv -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (!(Test-Path $targetConv)) {
+            New-Item -ItemType SymbolicLink -Path $targetConv -Target $sysConv -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
+
+    # Auto-share brain/ history safely
+    $targetBrain = "$profileDir\.gemini\antigravity-cli\brain"
+    $sysBrain    = "$env:USERPROFILE\.gemini\antigravity-cli\brain"
+    if ((Test-Path $sysBrain) -and ($env:SHARE_HISTORY -ne "false")) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetBrain) | Out-Null
+        if ((Test-Path $targetBrain) -and -not (Get-Item $targetBrain).Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            Copy-Item -Path "$targetBrain\*" -Destination "$sysBrain\" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $targetBrain -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (!(Test-Path $targetBrain)) {
+            New-Item -ItemType SymbolicLink -Path $targetBrain -Target $sysBrain -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
 }
 
 function Invoke-LaunchProfile {
@@ -170,23 +214,29 @@ function Invoke-LaunchProfile {
 }
 
 function Invoke-ListProfiles {
-    Write-Host "Existing profiles:"
     if (Test-Path $BASE) {
         $profiles = Get-ChildItem -Directory -Path $BASE | Where-Object { $_.PSIsContainer -and $_.Name -ne ".templates" }
-        if ($profiles.Count -gt 0) {
+        if ($profiles) {
+            "{0,-12} {1,-8} {2,-8} {3}" -f "PROFILE", "TYPE", "SIZE", "LAST USED"
+            "{0,-12} {1,-8} {2,-8} {3}" -f "-------", "----", "----", "---------"
             foreach ($p in $profiles) {
-                Write-Host $p.Name
+                $isShared = Test-Path "$($p.FullName)\.shared"
+                $pType = if ($isShared) { "shared" } else { "full" }
+                $lastUsed = if ($p.LastWriteTime) { $p.LastWriteTime.ToString("yyyy-MM-dd HH:mm") } else { "never" }
+                $sizeMb = [math]::Round(((Get-ChildItem $p.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+                $sizeStr = "${sizeMb}M"
+                "{0,-12} {1,-8} {2,-8} {3}" -f $p.Name, $pType, $sizeStr, $lastUsed
             }
-        }
-        elseif ($profiles -is [System.IO.DirectoryInfo]) {
-            Write-Host $profiles.Name
+            Write-Host ""
+            $totalMb = [math]::Round(((Get-ChildItem $BASE -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+            Write-Host "Total usage: ${totalMb}M"
         }
         else {
-            Write-Host "(none)"
+            Write-Host "No profiles found."
         }
     }
     else {
-        Write-Host "(none)"
+        Write-Host "No profiles found."
     }
 }
 

@@ -273,6 +273,49 @@ create_shared_layout() {
     done
   fi
 
+  # Auto-share global NPM cache to reduce profile storage size
+  if [ -d "$HOME/.npm" ]; then
+    if [ -e "$profile_path/.npm" ] && [ ! -L "$profile_path/.npm" ]; then
+      if [ -d "$profile_path/.npm" ]; then
+        cp -rn "$profile_path/.npm"/* "$HOME/.npm/" 2>/dev/null || true
+      fi
+      rm -rf "$profile_path/.npm"
+    fi
+    if [ ! -L "$profile_path/.npm" ]; then
+      rm -rf "$profile_path/.npm"
+      ln -s "$HOME/.npm" "$profile_path/.npm"
+    fi
+  fi
+
+  # Auto-share conversations index so sessions can be seamlessly resumed across profiles
+  local target_conv="$profile_path/.gemini/antigravity-cli/conversations"
+  local sys_conv="$HOME/.gemini/antigravity-cli/conversations"
+  if [ -d "$sys_conv" ]; then
+    mkdir -p "$(dirname "$target_conv")"
+    if [ -d "$target_conv" ] && [ ! -L "$target_conv" ]; then
+      cp -rn "$target_conv"/* "$sys_conv/" 2>/dev/null || true
+      rm -rf "$target_conv"
+    fi
+    if [ ! -e "$target_conv" ]; then
+      ln -s "$sys_conv" "$target_conv"
+    fi
+  fi
+
+  # Auto-share brain/ conversation history safely (migrating existing history first)
+  local target_brain="$profile_path/.gemini/antigravity-cli/brain"
+  local sys_brain="$HOME/.gemini/antigravity-cli/brain"
+  if [ "${SHARE_HISTORY:-true}" = "true" ] && [ -d "$sys_brain" ]; then
+    mkdir -p "$(dirname "$target_brain")"
+    if [ -d "$target_brain" ] && [ ! -L "$target_brain" ]; then
+      # Safely copy existing profile history into system brain to prevent data loss
+      cp -rn "$target_brain"/* "$sys_brain/" 2>/dev/null || true
+      rm -rf "$target_brain"
+    fi
+    if [ ! -e "$target_brain" ]; then
+      ln -s "$sys_brain" "$target_brain"
+    fi
+  fi
+
   case "$(platform)" in
     darwin)
       mkdir -p "$profile_path/Library/Application Support"
@@ -651,40 +694,61 @@ launch_profile() {
 }
 
 list_profiles() {
-  local entries=""
-  local dir
   local raw=${1-}
-
-  if [ "$raw" != "--raw" ]; then
-    echo "Existing profiles:"
-  fi
 
   if [ ! -d "$BASE" ]; then
     if [ "$raw" != "--raw" ]; then
-      echo "(none)"
+      print_info "No profiles found."
     fi
     return 0
   fi
 
+  if [ "$raw" = "--raw" ]; then
+    local entries="" dir
+    for dir in "$BASE"/*; do
+      [ -d "$dir" ] || continue
+      local n="$(basename "$dir")"
+      [ "$n" = ".templates" ] && continue
+      entries="${entries}${n}"$'\n'
+    done
+    if [ -n "$entries" ]; then
+      printf '%s' "$entries" | sort
+    fi
+    return 0
+  fi
+
+  printf "%-12s %-8s %-8s %s\n" "PROFILE" "TYPE" "SIZE" "LAST USED"
+  printf "%-12s %-8s %-8s %s\n" "-------" "----" "----" "---------"
+
+  local dir
   for dir in "$BASE"/*; do
     [ -d "$dir" ] || continue
-    local n
-    n="$(basename "$dir")"
-    [ "$n" = ".templates" ] && continue
-    entries="${entries}${n}"$'\n'
+    local name="$(basename "$dir")"
+    [ "$name" = ".templates" ] && continue
+
+    local ptype="full"
+    is_shared_profile "$name" && ptype="shared"
+
+    local size
+    size="$(du -sh "$dir" 2>/dev/null | cut -f1)"
+
+    local last_used
+    case "$(platform)" in
+      darwin) last_used=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$dir" 2>/dev/null || echo "never") ;;
+      linux)  last_used=$(stat -c "%y" "$dir" 2>/dev/null | cut -d':' -f1-2 || echo "never") ;;
+    esac
+
+    printf "%-12s %-8s %-8s %s\n" "$name" "$ptype" "$size" "$last_used"
   done
 
-  if [ -z "$entries" ]; then
-    if [ "$raw" != "--raw" ]; then
-      echo "(none)"
-    fi
-  else
-    printf '%s' "$entries" | sort
-  fi
+  echo ""
+  local total_size
+  total_size="$(du -sh "$BASE" 2>/dev/null | cut -f1)"
+  print_info "Total usage: $total_size"
 }
 
 new_profile() {
-  local profile="" shared=false from_tpl=""
+  local profile="" shared=false share_history=true from_tpl=""
 
   if [ $# -eq 0 ]; then
     new_profile_wizard
@@ -693,10 +757,11 @@ new_profile() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --shared)       shared=true ;;
-      --from)         from_tpl="${2-}"; shift ;;
-      -*)             abort "unknown option: $1" ;;
-      *)              profile="$1" ;;
+      --shared)            shared=true ;;
+      --no-share-history)  share_history=false ;;
+      --from)              from_tpl="${2-}"; shift ;;
+      -*)                  abort "unknown option: $1" ;;
+      *)                   profile="$1" ;;
     esac
     shift
   done
@@ -708,6 +773,8 @@ new_profile() {
   if [ -d "$profile_path" ]; then
     abort "profile '$profile' already exists"
   fi
+
+  export SHARE_HISTORY="$share_history"
 
   mkdir -p "$BASE"
 
@@ -1098,6 +1165,63 @@ template_cmd() {
   esac
 }
 
+sync_profile() {
+  local subcommand="${1-}"
+  shift || true
+
+  case "$subcommand" in
+    export)
+      local profile="${1-}" out="${2-}"
+      validate_name "$profile"
+      local profile_path="$(profile_dir "$profile")"
+      [ -d "$profile_path" ] || abort "profile '$profile' does not exist"
+      [ -z "$out" ] && out="./${profile}-history.tar.gz"
+
+      local brain_dir="$profile_path/.gemini/antigravity-cli/brain"
+      [ -d "$brain_dir" ] || abort "profile '$profile' has no history directory"
+
+      print_info "Exporting history from '$profile' to $out ..."
+      tar -czf "$out" -C "$(dirname "$brain_dir")" "brain"
+      print_info "Done."
+      ;;
+    import)
+      local archive="${1-}" profile="${2-}"
+      [ -n "$archive" ] || abort "usage: multigravity sync import <archive.tar.gz> <profile>"
+      [ -f "$archive" ] || abort "archive file not found: $archive"
+      validate_name "$profile"
+      local profile_path="$(profile_dir "$profile")"
+      [ -d "$profile_path" ] || abort "target profile '$profile' does not exist"
+
+      local target_brain="$profile_path/.gemini/antigravity-cli/brain"
+      mkdir -p "$(dirname "$target_brain")"
+      print_info "Importing history from $archive into '$profile' ..."
+      tar -xzf "$archive" -C "$(dirname "$target_brain")"
+      print_info "Done."
+      ;;
+    *)
+      local src="$subcommand" tgt="${1-}"
+      [ -n "$src" ] && [ -n "$tgt" ] || abort "usage: multigravity sync <source_profile> <target_profile> OR multigravity sync <export|import>"
+      validate_name "$src"
+      validate_name "$tgt"
+
+      local src_path="$(profile_dir "$src")"
+      local tgt_path="$(profile_dir "$tgt")"
+      [ -d "$src_path" ] || abort "source profile '$src' does not exist"
+      [ -d "$tgt_path" ] || abort "target profile '$tgt' does not exist"
+
+      local src_brain="$src_path/.gemini/antigravity-cli/brain"
+      local tgt_brain="$tgt_path/.gemini/antigravity-cli/brain"
+
+      [ -d "$src_brain" ] || abort "source profile '$src' has no conversation history to sync"
+
+      print_info "Syncing history from '$src' to '$tgt' (excluding credentials) ..."
+      mkdir -p "$tgt_brain"
+      cp -rn "$src_brain"/* "$tgt_brain/" 2>/dev/null || true
+      print_info "Done."
+      ;;
+  esac
+}
+
 export_profile() {
   local profile="${1-}" out="${2-}"
   validate_name "$profile"
@@ -1370,7 +1494,7 @@ Usage: multigravity (or mgy) <command> [args]
 Commands:
   new [name] [options]        Create a profile (runs wizard if name omitted)
       --shared                Share extensions & settings; isolate only accounts
-      --from <template>       Seed from a saved template
+      --no-share-history      Opt-out of auto sharing history for shared profile
   list                        List existing profiles
   status                      Show running state, type, and last-used per profile
   rename <old> <new>          Rename a profile (updates its shortcut)
@@ -1379,6 +1503,9 @@ Commands:
   template save <profile> <name>   Save a profile as a reusable template
   template list               List saved templates
   template delete <name>      Delete a template
+  sync <src> <target>         Sync conversation history between profiles
+  sync export <prof> [path]   Export profile history archive
+  sync import <arch> <prof>   Import profile history archive
   export <name> [path]        Archive a profile to tar.gz
   import <archive> [name]     Restore a profile from a tar.gz archive
   update                      Update multigravity to the latest version
@@ -1426,6 +1553,10 @@ case "$cmd" in
     ;;
   import)
     import_profile "${2-}" "${3-}"
+    ;;
+  sync)
+    shift
+    sync_profile "$@"
     ;;
   update)
     update_cli
