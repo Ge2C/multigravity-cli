@@ -658,16 +658,24 @@ launch_profile() {
   data_dir="$(user_data_dir "$profile_path")"
   ext_dir="$(extensions_dir "$profile_path")"
 
-  # Initialize/sync layout
+  local type_label="standalone"
+  if is_shared_profile "$profile"; then
+    type_label="shared"
+  fi
+
+  print_info "Switching profile to '$profile' ($type_label)"
+  printf "[██░░░░░░░░░░░░░░░░░░] 10%%\r"
+
   if is_shared_profile "$profile"; then
     create_shared_layout "$profile_path"
   elif [ ! -d "$ext_dir" ]; then
     create_profile_layout "$profile_path"
   fi
-
-  print_info "Launching Antigravity profile '$profile'"
+  printf "[██████████░░░░░░░░░░] 50%%\r"
 
   mkdir -p "$profile_path/.gemini/antigravity-cli"
+  sync 2>/dev/null || true
+  printf "[████████████████████] 100%%\n"
 
   case "$(platform)" in
     darwin)
@@ -679,9 +687,6 @@ launch_profile() {
       ;;
     linux)
       if is_cli_app "$app"; then
-        # agy CLI does not accept --user-data-dir / --extensions-dir (IDE-only flags).
-        # Profile isolation is achieved solely via the HOME override, which causes
-        # the CLI to resolve ~/.gemini/antigravity-cli inside the profile directory.
         _run_in_profile_env "$profile_path" "$app" "$@"
       else
         _run_in_profile_env "$profile_path" "$app" \
