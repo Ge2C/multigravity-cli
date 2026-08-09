@@ -1550,6 +1550,23 @@ format_time() {
   fi
 }
 
+get_color_code() {
+  local pct=$1
+  local color_code="\033[38;5;46m"  # Green
+  if [ "$pct" -le 16 ]; then
+    color_code="\033[38;5;88m"      # Super Dark Red
+  elif [ "$pct" -le 33 ]; then
+    color_code="\033[1;31m"         # Red
+  elif [ "$pct" -le 49 ]; then
+    color_code="\033[38;5;208m"     # Orange
+  elif [ "$pct" -le 66 ]; then
+    color_code="\033[1;33m"         # Yellow
+  elif [ "$pct" -le 83 ]; then
+    color_code="\033[38;5;118m"     # Chartreuse
+  fi
+  printf "%s" "$color_code"
+}
+
 render_bar() {
   local pct=$1
   local width=32
@@ -1564,26 +1581,7 @@ render_bar() {
   for ((i=0; i<filled; i++)); do filled_bar="${filled_bar}█"; done
   for ((i=0; i<empty; i++)); do empty_bar="${empty_bar}░"; done
 
-  # 6-Tier Color Thresholds:
-  # 84% - 100%: Green           (\033[38;5;46m)
-  # 67% - 83%:  Chartreuse      (\033[38;5;118m)
-  # 50% - 66%:  Yellow          (\033[1;33m)
-  # 34% - 49%:  Orange          (\033[38;5;208m)
-  # 17% - 33%:  Red             (\033[1;31m)
-  # 0%  - 16%:  Super Dark Red  (\033[38;5;88m)
-  local color_code="\033[38;5;46m"  # Green
-  if [ "$pct" -le 16 ]; then
-    color_code="\033[38;5;88m"      # Super Dark Red (256-color 88)
-  elif [ "$pct" -le 33 ]; then
-    color_code="\033[1;31m"         # Red
-  elif [ "$pct" -le 49 ]; then
-    color_code="\033[38;5;208m"     # Orange (256-color 208)
-  elif [ "$pct" -le 66 ]; then
-    color_code="\033[1;33m"         # Yellow
-  elif [ "$pct" -le 83 ]; then
-    color_code="\033[38;5;118m"     # Chartreuse (256-color 118)
-  fi
-
+  local color_code="$(get_color_code "$pct")"
   printf "  [%b%s\033[90m%s\033[0m]" "$color_code" "$filled_bar" "$empty_bar"
 }
 
@@ -1659,13 +1657,34 @@ fetch_profile_quota() {
     [ ! -f "$token_file" ] && token_file="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 
     local access_token=""
+    local refresh_token=""
     if [ -f "$token_file" ]; then
       access_token=$(grep -o '"access_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+      refresh_token=$(grep -o '"refresh_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
     fi
 
     local live_json=""
     if [ -n "$access_token" ]; then
       live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" 2>/dev/null || true)
+    fi
+
+    # Automatic OAuth Token Refresh if token expired or 401 unauthenticated
+    if echo "$live_json" | grep -q "UNAUTHENTICATED" && [ -n "$refresh_token" ]; then
+      local client_id="1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+      local client_secret="GOCSPX-q_429a3473"
+      local refresh_resp
+      refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+        --data-urlencode "client_id=$client_id" \
+        --data-urlencode "client_secret=$client_secret" \
+        --data-urlencode "grant_type=refresh_token" \
+        --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+
+      local new_acc_token
+      new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+      if [ -n "$new_acc_token" ]; then
+        access_token="$new_acc_token"
+        live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" 2>/dev/null || true)
+      fi
     fi
 
     # Gemini Group Quota (from gemini-3.6-flash-high or gemini-3-flash)
@@ -1706,17 +1725,20 @@ fetch_profile_quota() {
       fi
     fi
 
+    local gemini_color="$(get_color_code "$gemini_int")"
+    local claude_color="$(get_color_code "$claude_int")"
+
     echo -e "\033[1;35mGEMINI MODELS\033[0m"
     echo -e "  \033[90mModels within this group:\033[0m \033[36mGemini Flash\033[0m, \033[36mGemini Pro\033[0m"
     echo ""
     echo -e "  \033[1mWeekly Limit Remaining\033[0m"
     render_bar "$gemini_int"
-    echo -e " \033[1;33m${gemini_pct}%\033[0m"
+    echo -e " ${gemini_color}${gemini_pct}%\033[0m"
     echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
     echo ""
     echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
     render_bar "$gemini_int"
-    echo -e " \033[1;33m${gemini_pct}%\033[0m"
+    echo -e " ${gemini_color}${gemini_pct}%\033[0m"
     echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
     echo ""
     echo -e "\033[1;35mCLAUDE AND GPT MODELS\033[0m"
@@ -1724,7 +1746,7 @@ fetch_profile_quota() {
     echo ""
     echo -e "  \033[1mWeekly Limit Remaining\033[0m"
     render_bar "$claude_int"
-    echo -e " \033[38;5;46m${claude_pct}%\033[0m"
+    echo -e " ${claude_color}${claude_pct}%\033[0m"
     echo -e "  \033[90m${claude_int}% remaining · ${claude_time_str}\033[0m"
     echo ""
     echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
