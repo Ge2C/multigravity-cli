@@ -643,6 +643,50 @@ _run_in_profile_env() {
   "$@"
 }
 
+refresh_profile_token() {
+  local prof_dir=$1
+  local token_file="$prof_dir/.gemini/antigravity-cli/antigravity-oauth-token"
+  [ ! -f "$token_file" ] && token_file="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+
+  [ -f "$token_file" ] || return 0
+
+  local access_token refresh_token expiry_str
+  access_token=$(grep -o '"access_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+  refresh_token=$(grep -o '"refresh_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+  expiry_str=$(grep -o '"expiry"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+
+  [ -z "$refresh_token" ] && return 0
+
+  local is_expired=false
+  if [ -n "$expiry_str" ]; then
+    local now_sec=$(date +%s)
+    local exp_sec=$(date -d "$expiry_str" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$expiry_str" +%s 2>/dev/null || echo 0)
+    if [ "$exp_sec" -le "$now_sec" ]; then
+      is_expired=true
+    fi
+  else
+    is_expired=true
+  fi
+
+  if [ "$is_expired" = true ]; then
+    local client_id="1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+    local client_secret="GOCSPX-q_429a3473"
+    local refresh_resp
+    refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+      --data-urlencode "client_id=$client_id" \
+      --data-urlencode "client_secret=$client_secret" \
+      --data-urlencode "grant_type=refresh_token" \
+      --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+
+    local new_acc_token
+    new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+    if [ -n "$new_acc_token" ]; then
+      local new_expiry=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
+      sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
+    fi
+  fi
+}
+
 launch_profile() {
   local profile=$1
   shift || true
@@ -674,6 +718,7 @@ launch_profile() {
   printf "[██████████░░░░░░░░░░] 50%%\r"
 
   mkdir -p "$profile_path/.gemini/antigravity-cli"
+  refresh_profile_token "$profile_path"
   sync 2>/dev/null || true
   printf "[████████████████████] 100%%\n"
 
@@ -1683,6 +1728,7 @@ fetch_profile_quota() {
       new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
       if [ -n "$new_acc_token" ]; then
         access_token="$new_acc_token"
+        sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
         live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" 2>/dev/null || true)
       fi
     fi
