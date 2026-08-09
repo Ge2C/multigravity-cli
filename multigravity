@@ -1733,72 +1733,75 @@ fetch_profile_quota() {
       fi
     fi
 
-    # Gemini Group Quota (from gemini-3.6-flash-high or gemini-3-flash)
-    local gemini_frac=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"remainingFraction"' | head -n 1 | awk '{print $2}' | tr -d ',' || true)
-    [ -z "$gemini_frac" ] && gemini_frac="0.6626"
-    local gemini_pct=$(awk "BEGIN {printf \"%.2f\", $gemini_frac * 100}")
-    local gemini_int=$(awk "BEGIN {printf \"%d\", $gemini_frac * 100}")
-
-    local gemini_reset=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
-    local gemini_time_str="Refreshes in $(format_time 70 34)"
-    if [ -n "$gemini_reset" ]; then
-      local now_sec=$(date +%s)
-      local reset_sec=$(date -d "$gemini_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$gemini_reset" +%s 2>/dev/null || echo 0)
-      if [ "$reset_sec" -gt "$now_sec" ]; then
-        local diff_sec=$(( reset_sec - now_sec ))
-        local diff_h=$(( diff_sec / 3600 ))
-        local diff_m=$(( (diff_sec % 3600) / 60 ))
-        gemini_time_str="Refreshes in $(format_time $diff_h $diff_m)"
-      fi
+    if [ -z "$live_json" ] || echo "$live_json" | grep -q "UNAUTHENTICATED"; then
+      echo -e "  \033[1;31mFailed to fetch live quota (Session expired or unauthenticated)\033[0m"
+      echo -e "  \033[90mRun 'mgy $name' to refresh login credentials.\033[0m"
+      echo ""
+      continue
     fi
 
+    # Gemini Group Quota (from gemini-3.6-flash-high)
+    local gemini_frac=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"remainingFraction"' | head -n 1 | awk '{print $2}' | tr -d ',' || true)
+    
     # Claude Group Quota (from claude-sonnet-4-6)
     local claude_frac=$(echo "$live_json" | grep -A 10 '"claude-sonnet-4-6"' | grep '"remainingFraction"' | head -n 1 | awk '{print $2}' | tr -d ',' || true)
-    [ -z "$claude_frac" ] && claude_frac="0.8504"
-    local claude_pct=$(awk "BEGIN {printf \"%.2f\", $claude_frac * 100}")
-    local claude_int=$(awk "BEGIN {printf \"%d\", $claude_frac * 100}")
-
-    local claude_reset=$(echo "$live_json" | grep -A 10 '"claude-sonnet-4-6"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
-    local claude_time_str="Refreshes in $(format_time 62 45)"
-    if [ -n "$claude_reset" ]; then
-      local now_sec=$(date +%s)
-      local reset_sec=$(date -d "$claude_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$claude_reset" +%s 2>/dev/null || echo 0)
-      if [ "$reset_sec" -gt "$now_sec" ]; then
-        local diff_sec=$(( reset_sec - now_sec ))
-        local diff_h=$(( diff_sec / 3600 ))
-        local diff_m=$(( (diff_sec % 3600) / 60 ))
-        claude_time_str="Refreshes in $(format_time $diff_h $diff_m)"
-      fi
-    fi
-
-    local gemini_color="$(get_color_code "$gemini_int")"
-    local claude_color="$(get_color_code "$claude_int")"
 
     echo -e "\033[1;35mGEMINI MODELS\033[0m"
     echo -e "  \033[90mModels within this group:\033[0m \033[36mGemini Flash\033[0m, \033[36mGemini Pro\033[0m"
     echo ""
-    echo -e "  \033[1mWeekly Limit Remaining\033[0m"
-    render_bar "$gemini_int"
-    echo -e " ${gemini_color}${gemini_pct}%\033[0m"
-    echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
+    if [ -n "$gemini_frac" ]; then
+      local gemini_pct=$(awk "BEGIN {printf \"%.2f\", $gemini_frac * 100}")
+      local gemini_int=$(awk "BEGIN {printf \"%d\", $gemini_frac * 100}")
+      local gemini_color="$(get_color_code "$gemini_int")"
+      local gemini_reset=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
+      local gemini_time_str="Quota available"
+      if [ -n "$gemini_reset" ]; then
+        local now_sec=$(date +%s)
+        local reset_sec=$(date -d "$gemini_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$gemini_reset" +%s 2>/dev/null || echo 0)
+        if [ "$reset_sec" -gt "$now_sec" ]; then
+          local diff_sec=$(( reset_sec - now_sec ))
+          local diff_h=$(( diff_sec / 3600 ))
+          local diff_m=$(( (diff_sec % 3600) / 60 ))
+          gemini_time_str="Refreshes in $(format_time $diff_h $diff_m)"
+        fi
+      fi
+
+      echo -e "  \033[1mWeekly Limit Remaining\033[0m"
+      render_bar "$gemini_int"
+      echo -e " ${gemini_color}${gemini_pct}%\033[0m"
+      echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
+    else
+      echo -e "  \033[90mQuota information unavailable\033[0m"
+    fi
     echo ""
-    echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
-    render_bar "$gemini_int"
-    echo -e " ${gemini_color}${gemini_pct}%\033[0m"
-    echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
-    echo ""
+
     echo -e "\033[1;35mCLAUDE AND GPT MODELS\033[0m"
     echo -e "  \033[90mModels within this group:\033[0m \033[36mClaude Opus\033[0m, \033[36mClaude Sonnet\033[0m, \033[36mGPT-4o\033[0m"
     echo ""
-    echo -e "  \033[1mWeekly Limit Remaining\033[0m"
-    render_bar "$claude_int"
-    echo -e " ${claude_color}${claude_pct}%\033[0m"
-    echo -e "  \033[90m${claude_int}% remaining · ${claude_time_str}\033[0m"
-    echo ""
-    echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
-    render_bar 100
-    echo -e " \033[38;5;46m100.0%\033[0m"
-    echo -e "  \033[38;5;46mQuota available\033[0m"
+    if [ -n "$claude_frac" ]; then
+      local claude_pct=$(awk "BEGIN {printf \"%.2f\", $claude_frac * 100}")
+      local claude_int=$(awk "BEGIN {printf \"%d\", $claude_frac * 100}")
+      local claude_color="$(get_color_code "$claude_int")"
+      local claude_reset=$(echo "$live_json" | grep -A 10 '"claude-sonnet-4-6"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
+      local claude_time_str="Quota available"
+      if [ -n "$claude_reset" ]; then
+        local now_sec=$(date +%s)
+        local reset_sec=$(date -d "$claude_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$claude_reset" +%s 2>/dev/null || echo 0)
+        if [ "$reset_sec" -gt "$now_sec" ]; then
+          local diff_sec=$(( reset_sec - now_sec ))
+          local diff_h=$(( diff_sec / 3600 ))
+          local diff_m=$(( (diff_sec % 3600) / 60 ))
+          claude_time_str="Refreshes in $(format_time $diff_h $diff_m)"
+        fi
+      fi
+
+      echo -e "  \033[1mWeekly Limit Remaining\033[0m"
+      render_bar "$claude_int"
+      echo -e " ${claude_color}${claude_pct}%\033[0m"
+      echo -e "  \033[90m${claude_int}% remaining · ${claude_time_str}\033[0m"
+    else
+      echo -e "  \033[90mQuota information unavailable\033[0m"
+    fi
     echo ""
   done
 }

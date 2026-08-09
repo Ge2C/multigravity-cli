@@ -790,27 +790,67 @@ function Invoke-QuotaProfiles {
 
         Write-Host "  Account: $account"
         Write-Host ""
-        Write-Host "GEMINI MODELS"
-        Write-Host "  Models within this group: Gemini Flash, Gemini Pro"
+
+        $tokenFile = "$pdir\.gemini\antigravity-cli\antigravity-oauth-token"
+        if (-not (Test-Path $tokenFile)) { $tokenFile = "$env:USERPROFILE\.gemini\antigravity-cli\antigravity-oauth-token" }
+
+        $accessToken = ""
+        if (Test-Path $tokenFile) {
+            $tContent = Get-Content $tokenFile -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($tContent -and $tContent.token -and $tContent.token.access_token) {
+                $accessToken = $tContent.token.access_token
+            }
+        }
+
+        $liveJson = $null
+        if ($accessToken) {
+            $headers = @{
+                "Authorization" = "Bearer $accessToken"
+                "User-Agent"    = "AntigravityCLI"
+                "Content-Type"  = "application/json"
+            }
+            $liveJson = Invoke-RestMethod -Uri "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" -Method Post -Headers $headers -Body "{}" -ErrorAction SilentlyContinue
+        }
+
+        if (-not $liveJson -or $liveJson.error) {
+            Write-Host "  Failed to fetch live quota (Session expired or unauthenticated)" -ForegroundColor Red
+            Write-Host "  Run 'mgy $name' to refresh login credentials." -ForegroundColor Gray
+            Write-Host ""
+            continue
+        }
+
+        Write-Host "GEMINI MODELS" -ForegroundColor Magenta
+        Write-Host "  Models within this group: Gemini Flash, Gemini Pro" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "Weekly Limit Remaining"
-        Write-Host "  [█████████████████████░░░░░░░░░░░] 66.26%"
-        Write-Host "  66% remaining · Refreshes in $wTime"
+        
+        $gModel = $liveJson.models."gemini-3.6-flash-high"
+        if ($gModel -and $gModel.quotaInfo) {
+            $gFrac = [double]$gModel.quotaInfo.remainingFraction
+            $gPct = [math]::Round($gFrac * 100, 2)
+            $gInt = [int]($gFrac * 100)
+            Write-Host "  Weekly Limit Remaining"
+            Write-Host "  [████████████████████████████████] ${gPct}%"
+            Write-Host "  ${gInt}% remaining" -ForegroundColor Gray
+        } else {
+            Write-Host "  Quota information unavailable" -ForegroundColor Gray
+        }
         Write-Host ""
-        Write-Host "Five Hour Limit Remaining"
-        Write-Host "  [████████████████████░░░░░░░░░░░░] 65.34%"
-        Write-Host "  65% remaining · Refreshes in $fTime"
+
+        Write-Host "CLAUDE AND GPT MODELS" -ForegroundColor Magenta
+        Write-Host "  Models within this group: Claude Opus, Claude Sonnet, GPT-4o" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "CLAUDE AND GPT MODELS"
-        Write-Host "  Models within this group: Claude Opus, Claude Sonnet, GPT-4o"
-        Write-Host ""
-        Write-Host "Weekly Limit Remaining"
-        Write-Host "  [███████████████████████████░░░░░] 85.04%"
-        Write-Host "  85% remaining · Refreshes in $cwTime"
-        Write-Host ""
-        Write-Host "Five Hour Limit Remaining"
-        Write-Host "  [████████████████████████████████] 100.0%"
-        Write-Host "  Quota available"
+
+        $cModel = $liveJson.models."claude-sonnet-4-6"
+        if ($cModel -and $cModel.quotaInfo) {
+            $cFrac = [double]$cModel.quotaInfo.remainingFraction
+            $cPct = [math]::Round($cFrac * 100, 2)
+            $cInt = [int]($cFrac * 100)
+            Write-Host "  Weekly Limit Remaining"
+            Write-Host "  [████████████████████████████████] ${cPct}%"
+            Write-Host "  ${cInt}% remaining" -ForegroundColor Gray
+        } else {
+            Write-Host "  Quota information unavailable" -ForegroundColor Gray
+        }
         Write-Host ""
     }
 }
