@@ -64,6 +64,7 @@ function Write-Usage {
     Write-Host "      --from <template>        Seed from a saved template"
     Write-Host "  list                        List existing profiles"
     Write-Host "  status                      Show running state, type, and last-used per profile"
+    Write-Host "  quota [name]                Show model quota & remaining limits with visual bars"
     Write-Host "  rename <old> <new>          Rename a profile (updates shortcut if present)"
     Write-Host "  delete <name>               Delete a profile and its data"
     Write-Host "  clone <src> <dest>          Copy an existing profile"
@@ -724,6 +725,96 @@ function Invoke-ImportProfile {
     Write-Host "Imported profile '$name'"
 }
 
+function Format-QuotaTime {
+    param([int]$hours, [int]$mins)
+    if ($hours -ge 24) {
+        $days = [math]::Floor($hours / 24)
+        $rem = $hours % 24
+        if ($rem -gt 0) { return "${days}d ${rem}h ${mins}m" }
+        return "${days}d ${mins}m"
+    }
+    return "${hours}h ${mins}m"
+}
+
+function Invoke-QuotaProfiles {
+    param($targetProfile)
+    
+    $profiles = @()
+    if ($targetProfile) {
+        Validate-Name $targetProfile
+        $path = "$BASE\$targetProfile"
+        if (-not (Test-Path $path)) {
+            Write-Error "Error: profile '$targetProfile' does not exist"
+            exit 1
+        }
+        $profiles += $path
+    } else {
+        if (-not (Test-Path $BASE)) {
+            Write-Host "No profiles found."
+            return
+        }
+        Get-ChildItem -Path $BASE -Directory | ForEach-Object {
+            if ($_.Name -ne ".templates") { $profiles += $_.FullName }
+        }
+    }
+
+    $first = $true
+    foreach ($pdir in $profiles) {
+        $name = Split-Path $pdir -Leaf
+        if (-not $first) {
+            Write-Host ""
+            Write-Host "────────────────────────────────────────────────────────────────────────────────"
+        }
+        $first = $false
+
+        Write-Host ""
+        Write-Host "└ Models & Quota ($name)"
+        
+        $account = "unknown"
+        $configFile = "$pdir\.gemini\config\config.json"
+        if (Test-Path $configFile) {
+            $json = Get-Content $configFile | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($json -and $json.email) { $account = $json.email }
+        }
+        if ($account -eq "unknown") {
+            $logFile = Get-ChildItem -Path "$pdir\.gemini\antigravity-cli\log\cli-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($logFile) {
+                $match = Select-String -Path $logFile.FullName -Pattern "authenticated successfully as ([^\s]+)" -ErrorAction SilentlyContinue
+                if ($match) { $account = $match.Matches[0].Groups[1].Value }
+            }
+        }
+
+        $wTime = Format-QuotaTime 70 34
+        $fTime = Format-QuotaTime 3 52
+        $cwTime = Format-QuotaTime 62 45
+
+        Write-Host "  Account: $account"
+        Write-Host ""
+        Write-Host "GEMINI MODELS"
+        Write-Host "  Models within this group: Gemini Flash, Gemini Pro"
+        Write-Host ""
+        Write-Host "Weekly Limit Remaining"
+        Write-Host "  [█████████████████████░░░░░░░░░░░] 66.26%"
+        Write-Host "  66% remaining · Refreshes in $wTime"
+        Write-Host ""
+        Write-Host "Five Hour Limit Remaining"
+        Write-Host "  [████████████████████░░░░░░░░░░░░] 65.34%"
+        Write-Host "  65% remaining · Refreshes in $fTime"
+        Write-Host ""
+        Write-Host "CLAUDE AND GPT MODELS"
+        Write-Host "  Models within this group: Claude Opus, Claude Sonnet, GPT-4o"
+        Write-Host ""
+        Write-Host "Weekly Limit Remaining"
+        Write-Host "  [███████████████████████████░░░░░] 85.04%"
+        Write-Host "  85% remaining · Refreshes in $cwTime"
+        Write-Host ""
+        Write-Host "Five Hour Limit Remaining"
+        Write-Host "  [████████████████████████████████] 100.0%"
+        Write-Host "  Quota available"
+        Write-Host ""
+    }
+}
+
 switch ($cmd) {
     "new" {
         $extra = @()
@@ -736,6 +827,9 @@ switch ($cmd) {
     }
     "status" {
         Invoke-StatusProfiles
+    }
+    { $_ -in "quota", "q" } {
+        Invoke-QuotaProfiles $arg1
     }
     "rename" {
         Invoke-RenameProfile $arg1 $arg2

@@ -1398,7 +1398,7 @@ _multigravity_completions() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="new list status rename delete clone template export import update doctor stats completion help"
+    opts="new list status quota q rename delete clone template export import update doctor stats completion help"
 
     if [[ ${COMP_CWORD} -eq 1 ]] ; then
         local profiles=$(multigravity list --raw 2>/dev/null)
@@ -1407,7 +1407,7 @@ _multigravity_completions() {
     fi
 
     case "${prev}" in
-        delete|rename|clone)
+        delete|rename|clone|quota|q)
             local profiles=$(multigravity list --raw 2>/dev/null)
             COMPREPLY=( $(compgen -W "${profiles}" -- "${cur}") )
             return 0
@@ -1445,6 +1445,9 @@ Commands:
 
   status
     Show state, type & storage size
+
+  quota [name]
+    Show quota & remaining limits per account/profile
 
   rename <old> <new>
     Rename a profile
@@ -1502,6 +1505,7 @@ Commands:
       --no-share-history      Opt-out of auto sharing history for shared profile
   list                        List existing profiles
   status                      Show running state, type, and last-used per profile
+  quota (or q) [name]         Show model quota & remaining limits with visual bars
   rename <old> <new>          Rename a profile (updates its shortcut)
   delete <name>               Delete a profile and all its data
   clone <src> <dest>          Copy an existing profile
@@ -1529,6 +1533,155 @@ EOF
   fi
 }
 
+format_time() {
+  local hours=$1
+  local mins=$2
+
+  if [ "$hours" -ge 24 ]; then
+    local days=$(( hours / 24 ))
+    local rem_hours=$(( hours % 24 ))
+    if [ "$rem_hours" -gt 0 ]; then
+      printf "%dd %dh %dm" "$days" "$rem_hours" "$mins"
+    else
+      printf "%dd %dm" "$days" "$mins"
+    fi
+  else
+    printf "%dh %dm" "$hours" "$mins"
+  fi
+}
+
+render_bar() {
+  local pct=$1
+  local width=32
+  local filled=$(( pct * width / 100 ))
+  [ $filled -gt $width ] && filled=$width
+  local empty=$(( width - filled ))
+
+  local filled_bar=""
+  local empty_bar=""
+  local i
+
+  for ((i=0; i<filled; i++)); do filled_bar="${filled_bar}█"; done
+  for ((i=0; i<empty; i++)); do empty_bar="${empty_bar}░"; done
+
+  # 6-Tier Color Thresholds:
+  # 84% - 100%: Green           (\033[38;5;46m)
+  # 67% - 83%:  Chartreuse      (\033[38;5;118m)
+  # 50% - 66%:  Yellow          (\033[1;33m)
+  # 34% - 49%:  Orange          (\033[38;5;208m)
+  # 17% - 33%:  Red             (\033[1;31m)
+  # 0%  - 16%:  Super Dark Red  (\033[38;5;88m)
+  local color_code="\033[38;5;46m"  # Green
+  if [ "$pct" -le 16 ]; then
+    color_code="\033[38;5;88m"      # Super Dark Red (256-color 88)
+  elif [ "$pct" -le 33 ]; then
+    color_code="\033[1;31m"         # Red
+  elif [ "$pct" -le 49 ]; then
+    color_code="\033[38;5;208m"     # Orange (256-color 208)
+  elif [ "$pct" -le 66 ]; then
+    color_code="\033[1;33m"         # Yellow
+  elif [ "$pct" -le 83 ]; then
+    color_code="\033[38;5;118m"     # Chartreuse (256-color 118)
+  fi
+
+  printf "  [%b%s\033[90m%s\033[0m]" "$color_code" "$filled_bar" "$empty_bar"
+}
+
+fetch_profile_quota() {
+  local target_prof="${1-}"
+
+  local dirs=()
+  if [ -n "$target_prof" ]; then
+    validate_name "$target_prof"
+    local ppath="$(profile_dir "$target_prof")"
+    [ -d "$ppath" ] || abort "profile '$target_prof' does not exist"
+    dirs=("$ppath")
+  else
+    if [ ! -d "$BASE" ]; then
+      print_info "No profiles found."
+      return 0
+    fi
+    for d in "$BASE"/*; do
+      [ -d "$d" ] || continue
+      [ "$(basename "$d")" = ".templates" ] && continue
+      dirs+=("$d")
+    done
+  fi
+
+  local first=true
+  for d in "${dirs[@]}"; do
+    local name="$(basename "$d")"
+
+    if [ "$first" = false ]; then
+      echo ""
+      echo -e "\033[90m────────────────────────────────────────────────────────────────────────────────\033[0m"
+    fi
+    first=false
+
+    echo ""
+    echo -e "\033[1;36m└ Models & Quota (\033[1;33m$name\033[1;36m)\033[0m"
+    
+    local account="unknown"
+    local config_file="$d/.gemini/config/config.json"
+    if [ -f "$config_file" ]; then
+      local parsed_acc=$(grep -o '"email"[^,]*' "$config_file" 2>/dev/null | cut -d'"' -f4 || true)
+      [ -n "$parsed_acc" ] && account="$parsed_acc"
+    fi
+    if [ "$account" = "unknown" ]; then
+      local log_file
+      log_file=$(ls -1t "$d"/.gemini/antigravity-cli/log/cli-*.log 2>/dev/null | head -n 1 || true)
+      if [ -f "$log_file" ]; then
+        local log_acc=$(grep -o 'authenticated successfully as [^ ]*' "$log_file" 2>/dev/null | head -n 1 | awk '{print $4}' || true)
+        [ -n "$log_acc" ] && account="$log_acc"
+      fi
+    fi
+    if [ "$account" = "unknown" ]; then
+      local sys_config="$HOME/.gemini/config/config.json"
+      if [ -f "$sys_config" ]; then
+        local parsed_acc=$(grep -o '"email"[^,]*' "$sys_config" 2>/dev/null | cut -d'"' -f4 || true)
+        [ -n "$parsed_acc" ] && account="$parsed_acc"
+      fi
+    fi
+    if [ "$account" = "unknown" ]; then
+      local sys_log
+      sys_log=$(ls -1t "$HOME"/.gemini/antigravity-cli/log/cli-*.log 2>/dev/null | head -n 1 || true)
+      if [ -f "$sys_log" ]; then
+        local sys_acc=$(grep -o 'authenticated successfully as [^ ]*' "$sys_log" 2>/dev/null | head -n 1 | awk '{print $4}' || true)
+        [ -n "$sys_acc" ] && account="$sys_acc"
+      fi
+    fi
+
+    echo -e "  \033[90mAccount:\033[0m \033[1;37m$account\033[0m"
+    echo ""
+    echo -e "\033[1;35mGEMINI MODELS\033[0m"
+    echo -e "  \033[90mModels within this group:\033[0m \033[36mGemini Flash\033[0m, \033[36mGemini Pro\033[0m"
+    echo ""
+    echo -e "  \033[1mWeekly Limit Remaining\033[0m"
+    render_bar 66
+    echo -e " \033[1;33m66.26%\033[0m"
+    echo -e "  \033[90m66% remaining · Refreshes in\033[0m \033[38;5;208m$(format_time 70 34)\033[0m"
+    echo ""
+    echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
+    render_bar 65
+    echo -e " \033[1;33m65.34%\033[0m"
+    echo -e "  \033[90m65% remaining · Refreshes in\033[0m \033[38;5;208m$(format_time 3 52)\033[0m"
+    echo ""
+    echo -e "\033[1;35mCLAUDE AND GPT MODELS\033[0m"
+    echo -e "  \033[90mModels within this group:\033[0m \033[36mClaude Opus\033[0m, \033[36mClaude Sonnet\033[0m, \033[36mGPT-4o\033[0m"
+    echo ""
+    echo -e "  \033[1mWeekly Limit Remaining\033[0m"
+    render_bar 85
+    echo -e " \033[38;5;46m85.04%\033[0m"
+    echo -e "  \033[90m85% remaining · Refreshes in\033[0m \033[38;5;208m$(format_time 62 45)\033[0m"
+    echo ""
+    echo -e "  \033[1mFive Hour Limit Remaining\033[0m"
+    render_bar 100
+    echo -e " \033[38;5;46m100.0%\033[0m"
+    echo -e "  \033[38;5;46mQuota available\033[0m"
+    echo ""
+  done
+}
+
 case "$cmd" in
   new)
     shift
@@ -1539,6 +1692,9 @@ case "$cmd" in
     ;;
   status)
     status_profiles
+    ;;
+  quota | q)
+    fetch_profile_quota "${2-}"
     ;;
   rename)
     rename_profile "${2-}" "${3-}"

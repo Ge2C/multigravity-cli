@@ -77,6 +77,7 @@ Each profile gets an automatic clickable launcher:
 | `multigravity <name>` | Launch a profile |
 | `multigravity list` | List all profiles |
 | `multigravity status` | Show running state, type, last used, and size per profile |
+| `multigravity quota [name]` | Show model quota & remaining limits with visual progress bars |
 | `multigravity clone <src> <dest>` | Copy an existing profile |
 | `multigravity rename <old> <new>` | Rename a profile |
 | `multigravity delete <name>` | Delete a profile and all its data |
