@@ -3,7 +3,15 @@ set -euo pipefail
 
 shopt -s nullglob
 
-BASE="${MULTIGRAVITY_HOME:-$HOME/AntigravityProfiles}"
+if [ -n "${MULTIGRAVITY_HOME:-}" ]; then
+  BASE="$MULTIGRAVITY_HOME"
+elif [ -n "${MULTIGRAVITY_REAL_HOME:-}" ]; then
+  BASE="$MULTIGRAVITY_REAL_HOME/AntigravityProfiles"
+elif [ -d "/data/data/com.termux" ] && [ -n "${PREFIX:-}" ]; then
+  BASE="${PREFIX%/usr}/home/AntigravityProfiles"
+else
+  BASE="$HOME/AntigravityProfiles"
+fi
 cmd="${1-}"
 
 abort() {
@@ -13,6 +21,55 @@ abort() {
 
 print_info() {
   echo "$1"
+}
+
+extract_app_credentials() {
+  local force_scan="${1:-false}"
+  local cache_dir="${BASE:-$HOME/AntigravityProfiles}"
+  [ ! -d "$cache_dir" ] && cache_dir="${PREFIX%/usr}/home/AntigravityProfiles"
+  local cache_file="$cache_dir/.app_credentials_cache"
+
+  # Return cached credentials if valid and force_scan is false
+  if [ "$force_scan" != "true" ] && [ -f "$cache_file" ]; then
+    local cached
+    cached="$(cat "$cache_file" 2>/dev/null || true)"
+    if [ -n "$cached" ] && echo "$cached" | grep -q "|"; then
+      printf '%s\n' "$cached"
+      return 0
+    fi
+  fi
+
+  local app_bin
+  app_bin="$(command -v agy.va39 2>/dev/null || command -v agy 2>/dev/null || find_app 2>/dev/null || true)"
+  local extracted=""
+  if [ -n "$app_bin" ] && [ -f "$app_bin" ]; then
+    extracted="$(python3 -c '
+import sys, re
+try:
+    with open("'"$app_bin"'", "rb") as f:
+        data = f.read()
+    cid_match = re.search(b"1071006060591-[a-z0-9]+\\.apps\\.googleusercontent\\.com", data)
+    sec_match = re.search(b"GOCSPX-[A-Za-z0-9_-]+", data)
+    if cid_match and sec_match:
+        cid = cid_match.group().decode()
+        sec = sec_match.group().decode()
+        if "https" in sec:
+            sec = sec.split("https")[0]
+        if "GOCSPX-" in sec[7:]:
+            sec = sec[:sec.index("GOCSPX-", 7)]
+        print(f"{cid}|{sec}")
+except Exception:
+    sys.exit(1)
+' 2>/dev/null || true)"
+  fi
+
+  if [ -n "$extracted" ]; then
+    mkdir -p "$cache_dir" 2>/dev/null || true
+    printf '%s\n' "$extracted" > "$cache_file" 2>/dev/null || true
+    chmod 600 "$cache_file" 2>/dev/null || true
+  fi
+
+  printf '%s\n' "$extracted"
 }
 
 # Cached platform result — set on first call to avoid repeated uname forks.
@@ -669,8 +726,10 @@ refresh_profile_token() {
   fi
 
   if [ "$is_expired" = true ]; then
-    local client_id="1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-    local client_secret="GOCSPX-q_429a3473"
+    local creds client_id client_secret
+    creds=$(extract_app_credentials)
+    client_id=$(echo "$creds" | cut -d'|' -f1)
+    client_secret=$(echo "$creds" | cut -d'|' -f2)
     local refresh_resp
     refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
       --data-urlencode "client_id=$client_id" \
@@ -680,6 +739,20 @@ refresh_profile_token() {
 
     local new_acc_token
     new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+
+    # Retry with forced binary re-scan if initial cached credentials failed
+    if [ -z "$new_acc_token" ] && echo "$refresh_resp" | grep -q "invalid_client"; then
+      creds=$(extract_app_credentials true)
+      client_id=$(echo "$creds" | cut -d'|' -f1)
+      client_secret=$(echo "$creds" | cut -d'|' -f2)
+      refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+        --data-urlencode "client_id=$client_id" \
+        --data-urlencode "client_secret=$client_secret" \
+        --data-urlencode "grant_type=refresh_token" \
+        --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+      new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+    fi
+
     if [ -n "$new_acc_token" ]; then
       local new_expiry=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
       sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
@@ -1710,13 +1783,15 @@ fetch_profile_quota() {
 
     local live_json=""
     if [ -n "$access_token" ]; then
-      live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" 2>/dev/null || true)
+      live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
     fi
 
     # Automatic OAuth Token Refresh if token expired or 401 unauthenticated
     if echo "$live_json" | grep -q "UNAUTHENTICATED" && [ -n "$refresh_token" ]; then
-      local client_id="1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-      local client_secret="GOCSPX-q_429a3473"
+      local creds client_id client_secret
+      creds=$(extract_app_credentials)
+      client_id=$(echo "$creds" | cut -d'|' -f1)
+      client_secret=$(echo "$creds" | cut -d'|' -f2)
       local refresh_resp
       refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
         --data-urlencode "client_id=$client_id" \
@@ -1726,10 +1801,24 @@ fetch_profile_quota() {
 
       local new_acc_token
       new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+
+      # Retry with forced binary re-scan if initial cached credentials failed
+      if [ -z "$new_acc_token" ] && echo "$refresh_resp" | grep -q "invalid_client"; then
+        creds=$(extract_app_credentials true)
+        client_id=$(echo "$creds" | cut -d'|' -f1)
+        client_secret=$(echo "$creds" | cut -d'|' -f2)
+        refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+          --data-urlencode "client_id=$client_id" \
+          --data-urlencode "client_secret=$client_secret" \
+          --data-urlencode "grant_type=refresh_token" \
+          --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+        new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+      fi
+
       if [ -n "$new_acc_token" ]; then
         access_token="$new_acc_token"
         sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
-        live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" 2>/dev/null || true)
+        live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
       fi
     fi
 
@@ -1740,69 +1829,71 @@ fetch_profile_quota() {
       continue
     fi
 
-    # Gemini Group Quota (from gemini-3.6-flash-high)
-    local gemini_frac=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"remainingFraction"' | head -n 1 | awk '{print $2}' | tr -d ',' || true)
-    
-    # Claude Group Quota (from claude-sonnet-4-6)
-    local claude_frac=$(echo "$live_json" | grep -A 10 '"claude-sonnet-4-6"' | grep '"remainingFraction"' | head -n 1 | awk '{print $2}' | tr -d ',' || true)
+    echo "$live_json" | python3 -c '
+import sys, json, datetime
 
-    echo -e "\033[1;35mGEMINI MODELS\033[0m"
-    echo -e "  \033[90mModels within this group:\033[0m \033[36mGemini Flash\033[0m, \033[36mGemini Pro\033[0m"
-    echo ""
-    if [ -n "$gemini_frac" ]; then
-      local gemini_pct=$(awk "BEGIN {printf \"%.2f\", $gemini_frac * 100}")
-      local gemini_int=$(awk "BEGIN {printf \"%d\", $gemini_frac * 100}")
-      local gemini_color="$(get_color_code "$gemini_int")"
-      local gemini_reset=$(echo "$live_json" | grep -A 10 '"gemini-3.6-flash-high"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
-      local gemini_time_str="Quota available"
-      if [ -n "$gemini_reset" ]; then
-        local now_sec=$(date +%s)
-        local reset_sec=$(date -d "$gemini_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$gemini_reset" +%s 2>/dev/null || echo 0)
-        if [ "$reset_sec" -gt "$now_sec" ]; then
-          local diff_sec=$(( reset_sec - now_sec ))
-          local diff_h=$(( diff_sec / 3600 ))
-          local diff_m=$(( (diff_sec % 3600) / 60 ))
-          gemini_time_str="Refreshes in $(format_time $diff_h $diff_m)"
-        fi
-      fi
+data = json.load(sys.stdin)
+groups = data.get("groups", [])
 
-      echo -e "  \033[1mWeekly Limit Remaining\033[0m"
-      render_bar "$gemini_int"
-      echo -e " ${gemini_color}${gemini_pct}%\033[0m"
-      echo -e "  \033[90m${gemini_int}% remaining · ${gemini_time_str}\033[0m"
-    else
-      echo -e "  \033[90mQuota information unavailable\033[0m"
-    fi
-    echo ""
+for g in groups:
+    g_name = g.get("displayName", "").upper()
+    g_desc = g.get("description", "")
+    print(f"\033[1;35m{g_name}\033[0m")
+    if g_desc:
+        print(f"  \033[90m{g_desc}\033[0m")
+    print("")
 
-    echo -e "\033[1;35mCLAUDE AND GPT MODELS\033[0m"
-    echo -e "  \033[90mModels within this group:\033[0m \033[36mClaude Opus\033[0m, \033[36mClaude Sonnet\033[0m, \033[36mGPT-4o\033[0m"
-    echo ""
-    if [ -n "$claude_frac" ]; then
-      local claude_pct=$(awk "BEGIN {printf \"%.2f\", $claude_frac * 100}")
-      local claude_int=$(awk "BEGIN {printf \"%d\", $claude_frac * 100}")
-      local claude_color="$(get_color_code "$claude_int")"
-      local claude_reset=$(echo "$live_json" | grep -A 10 '"claude-sonnet-4-6"' | grep '"resetTime"' | head -n 1 | cut -d'"' -f4 || true)
-      local claude_time_str="Quota available"
-      if [ -n "$claude_reset" ]; then
-        local now_sec=$(date +%s)
-        local reset_sec=$(date -d "$claude_reset" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$claude_reset" +%s 2>/dev/null || echo 0)
-        if [ "$reset_sec" -gt "$now_sec" ]; then
-          local diff_sec=$(( reset_sec - now_sec ))
-          local diff_h=$(( diff_sec / 3600 ))
-          local diff_m=$(( (diff_sec % 3600) / 60 ))
-          claude_time_str="Refreshes in $(format_time $diff_h $diff_m)"
-        fi
-      fi
+    for b in g.get("buckets", []):
+        b_name = b.get("displayName", "Limit Remaining")
+        b_frac = b.get("remainingFraction", 1.0)
+        b_pct = b_frac * 100
+        b_int = int(b_pct)
+        b_reset = b.get("resetTime", "")
 
-      echo -e "  \033[1mWeekly Limit Remaining\033[0m"
-      render_bar "$claude_int"
-      echo -e " ${claude_color}${claude_pct}%\033[0m"
-      echo -e "  \033[90m${claude_int}% remaining · ${claude_time_str}\033[0m"
-    else
-      echo -e "  \033[90mQuota information unavailable\033[0m"
-    fi
-    echo ""
+        if b_int <= 16:
+            color = "\033[38;5;88m"
+        elif b_int <= 33:
+            color = "\033[1;31m"
+        elif b_int <= 49:
+            color = "\033[38;5;208m"
+        elif b_int <= 66:
+            color = "\033[1;33m"
+        elif b_int <= 83:
+            color = "\033[38;5;118m"
+        else:
+            color = "\033[38;5;46m"
+
+        width = 32
+        filled = min(width, max(0, int(b_pct * width / 100)))
+        empty = width - filled
+        filled_str = "█" * filled
+        empty_str = "░" * empty
+        bar = f"  [{color}{filled_str}\033[90m{empty_str}\033[0m]"
+
+        time_str = "Quota available"
+        if b_reset:
+            try:
+                clean_reset = b_reset.replace("Z", "+00:00")
+                rt = datetime.datetime.fromisoformat(clean_reset)
+                now = datetime.datetime.now(datetime.timezone.utc)
+                diff = (rt - now).total_seconds()
+                if diff > 0:
+                    dh = int(diff // 3600)
+                    dm = int((diff % 3600) // 60)
+                    if dh >= 24:
+                        dd = dh // 24
+                        dh_rem = dh % 24
+                        time_str = f"Refreshes in {dd}d {dh_rem}h {dm}m"
+                    else:
+                        time_str = f"Refreshes in {dh}h {dm}m"
+            except Exception:
+                pass
+
+        print(f"  \033[1m{b_name}\033[0m")
+        print(f"{bar} {color}{b_pct:.2f}%\033[0m")
+        print(f"  \033[90m{b_int}% remaining · {time_str}\033[0m")
+        print("")
+' 2>/dev/null || echo -e "  \033[90mQuota information unavailable\033[0m\n"
   done
 }
 
