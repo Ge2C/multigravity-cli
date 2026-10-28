@@ -373,6 +373,19 @@ create_shared_layout() {
     fi
   fi
 
+  # Auto-share CLI helper binaries (webm_encoder, agentapi) to eliminate duplicate storage overhead
+  local target_bin="$profile_path/.gemini/antigravity-cli/bin"
+  local sys_bin="$HOME/.gemini/antigravity-cli/bin"
+  if [ -d "$sys_bin" ]; then
+    mkdir -p "$(dirname "$target_bin")"
+    if [ -d "$target_bin" ] && [ ! -L "$target_bin" ]; then
+      rm -rf "$target_bin"
+    fi
+    if [ ! -e "$target_bin" ]; then
+      ln -s "$sys_bin" "$target_bin"
+    fi
+  fi
+
   case "$(platform)" in
     darwin)
       mkdir -p "$profile_path/Library/Application Support"
@@ -1771,54 +1784,67 @@ fetch_profile_quota() {
     echo ""
 
     # Live API Quota Fetch
-    local token_file="$d/.gemini/antigravity-cli/antigravity-oauth-token"
-    [ ! -f "$token_file" ] && token_file="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
-
-    local access_token=""
-    local refresh_token=""
-    if [ -f "$token_file" ]; then
-      access_token=$(grep -o '"access_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
-      refresh_token=$(grep -o '"refresh_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
-    fi
-
     local live_json=""
-    if [ -n "$access_token" ]; then
-      live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
+    local app=""
+    if app="$(find_app 2>/dev/null)" && is_cli_app "$app"; then
+      live_json=$(env \
+        HOME="$d" \
+        GEMINI_HOME="$d/.gemini" \
+        GEMINI_CLI_HOME="$d/.gemini/antigravity-cli" \
+        ANTIGRAVITY_CONFIG_DIR="$d/.gemini/antigravity-cli" \
+        "$app" -p "/quota" --output-format json 2>/dev/null || true)
     fi
 
-    # Automatic OAuth Token Refresh if token expired or 401 unauthenticated
-    if echo "$live_json" | grep -q "UNAUTHENTICATED" && [ -n "$refresh_token" ]; then
-      local creds client_id client_secret
-      creds=$(extract_app_credentials)
-      client_id=$(echo "$creds" | cut -d'|' -f1)
-      client_secret=$(echo "$creds" | cut -d'|' -f2)
-      local refresh_resp
-      refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
-        --data-urlencode "client_id=$client_id" \
-        --data-urlencode "client_secret=$client_secret" \
-        --data-urlencode "grant_type=refresh_token" \
-        --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+    # Fallback to direct API curl if CLI query did not return valid JSON groups
+    if [ -z "$live_json" ] || ! echo "$live_json" | grep -q '"groups"'; then
+      local token_file="$d/.gemini/antigravity-cli/antigravity-oauth-token"
+      [ ! -f "$token_file" ] && token_file="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 
-      local new_acc_token
-      new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+      local access_token=""
+      local refresh_token=""
+      if [ -f "$token_file" ]; then
+        access_token=$(grep -o '"access_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+        refresh_token=$(grep -o '"refresh_token"[^,]*' "$token_file" 2>/dev/null | cut -d'"' -f4 || true)
+      fi
 
-      # Retry with forced binary re-scan if initial cached credentials failed
-      if [ -z "$new_acc_token" ] && echo "$refresh_resp" | grep -q "invalid_client"; then
-        creds=$(extract_app_credentials true)
+      if [ -n "$access_token" ]; then
+        live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
+      fi
+
+      # Automatic OAuth Token Refresh if token expired or 401 unauthenticated
+      if echo "$live_json" | grep -q "UNAUTHENTICATED" && [ -n "$refresh_token" ]; then
+        local creds client_id client_secret
+        creds=$(extract_app_credentials)
         client_id=$(echo "$creds" | cut -d'|' -f1)
         client_secret=$(echo "$creds" | cut -d'|' -f2)
+        local refresh_resp
         refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
           --data-urlencode "client_id=$client_id" \
           --data-urlencode "client_secret=$client_secret" \
           --data-urlencode "grant_type=refresh_token" \
           --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
-        new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
-      fi
 
-      if [ -n "$new_acc_token" ]; then
-        access_token="$new_acc_token"
-        sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
-        live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
+        local new_acc_token
+        new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+
+        # Retry with forced binary re-scan if initial cached credentials failed
+        if [ -z "$new_acc_token" ] && echo "$refresh_resp" | grep -q "invalid_client"; then
+          creds=$(extract_app_credentials true)
+          client_id=$(echo "$creds" | cut -d'|' -f1)
+          client_secret=$(echo "$creds" | cut -d'|' -f2)
+          refresh_resp=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+            --data-urlencode "client_id=$client_id" \
+            --data-urlencode "client_secret=$client_secret" \
+            --data-urlencode "grant_type=refresh_token" \
+            --data-urlencode "refresh_token=$refresh_token" 2>/dev/null || true)
+          new_acc_token=$(echo "$refresh_resp" | grep -o '"access_token"[^,]*' | cut -d'"' -f4 || true)
+        fi
+
+        if [ -n "$new_acc_token" ]; then
+          access_token="$new_acc_token"
+          sed -i "s/\"access_token\":\"[^\"]*\"/\"access_token\":\"$new_acc_token\"/" "$token_file" 2>/dev/null || true
+          live_json=$(curl -s -X POST -H "Authorization: Bearer $access_token" -H "User-Agent: AntigravityCLI" -H "Content-Type: application/json" -d '{}' "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" 2>/dev/null || true)
+        fi
       fi
     fi
 
@@ -1832,11 +1858,30 @@ fetch_profile_quota() {
     echo "$live_json" | python3 -c '
 import sys, json, datetime
 
-data = json.load(sys.stdin)
-groups = data.get("groups", [])
+raw = sys.stdin.read().strip()
+if not raw:
+    print("  \033[90mQuota information unavailable\033[0m\n")
+    sys.exit(0)
+
+try:
+    data = json.loads(raw)
+except Exception:
+    print("  \033[90mQuota information unavailable\033[0m\n")
+    sys.exit(0)
+
+groups = []
+if "command" in data and isinstance(data["command"], dict):
+    cmd_data = data["command"].get("data", {})
+    groups = cmd_data.get("groups", [])
+elif "groups" in data:
+    groups = data.get("groups", [])
+
+if not groups:
+    print("  \033[90mQuota information unavailable\033[0m\n")
+    sys.exit(0)
 
 for g in groups:
-    g_name = g.get("displayName", "").upper()
+    g_name = (g.get("name") or g.get("displayName") or "").upper()
     g_desc = g.get("description", "")
     print(f"\033[1;35m{g_name}\033[0m")
     if g_desc:
@@ -1844,11 +1889,13 @@ for g in groups:
     print("")
 
     for b in g.get("buckets", []):
-        b_name = b.get("displayName", "Limit Remaining")
-        b_frac = b.get("remainingFraction", 1.0)
+        b_name = b.get("name") or b.get("displayName") or "Limit Remaining"
+        b_frac = b.get("remaining_fraction")
+        if b_frac is None:
+            b_frac = b.get("remainingFraction", 1.0)
         b_pct = b_frac * 100
         b_int = int(b_pct)
-        b_reset = b.get("resetTime", "")
+        b_reset = b.get("reset_time") or b.get("resetTime") or ""
 
         if b_int <= 16:
             color = "\033[38;5;88m"

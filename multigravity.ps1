@@ -183,6 +183,19 @@ function Invoke-CreateSharedProfile {
             New-Item -ItemType SymbolicLink -Path $targetBrain -Target $sysBrain -ErrorAction SilentlyContinue | Out-Null
         }
     }
+
+    # Auto-share CLI helper binaries (webm_encoder, agentapi)
+    $targetBin = "$profileDir\.gemini\antigravity-cli\bin"
+    $sysBin    = "$env:USERPROFILE\.gemini\antigravity-cli\bin"
+    if (Test-Path $sysBin) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetBin) | Out-Null
+        if ((Test-Path $targetBin) -and -not (Get-Item $targetBin).Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            Remove-Item -Path $targetBin -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (!(Test-Path $targetBin)) {
+            New-Item -ItemType SymbolicLink -Path $targetBin -Target $sysBin -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
 }
 
 function Invoke-LaunchProfile {
@@ -803,55 +816,75 @@ function Invoke-QuotaProfiles {
         }
 
         $liveJson = $null
-        if ($accessToken) {
-            $headers = @{
-                "Authorization" = "Bearer $accessToken"
-                "User-Agent"    = "AntigravityCLI"
-                "Content-Type"  = "application/json"
+        if ($APP) {
+            $prevUserProfile = $env:USERPROFILE
+            $prevGeminiCliHome = $env:GEMINI_CLI_HOME
+            $prevAntigravityConfigDir = $env:ANTIGRAVITY_CONFIG_DIR
+            try {
+                $env:USERPROFILE = $d.FullName
+                $env:GEMINI_CLI_HOME = "$($d.FullName)\.gemini\antigravity-cli"
+                $env:ANTIGRAVITY_CONFIG_DIR = "$($d.FullName)\.gemini\antigravity-cli"
+                $rawOut = & $APP -p "/quota" --output-format json 2>$null
+                if ($rawOut) {
+                    $liveJson = $rawOut | ConvertFrom-Json -ErrorAction SilentlyContinue
+                }
+            } finally {
+                $env:USERPROFILE = $prevUserProfile
+                $env:GEMINI_CLI_HOME = $prevGeminiCliHome
+                $env:ANTIGRAVITY_CONFIG_DIR = $prevAntigravityConfigDir
             }
-            $liveJson = Invoke-RestMethod -Uri "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" -Method Post -Headers $headers -Body "{}" -ErrorAction SilentlyContinue
         }
 
-        if (-not $liveJson -or $liveJson.error) {
+        # Fallback to direct API if CLI query failed
+        if (-not $liveJson -or (-not $liveJson.command -and -not $liveJson.groups)) {
+            if ($accessToken) {
+                $headers = @{
+                    "Authorization" = "Bearer $accessToken"
+                    "User-Agent"    = "AntigravityCLI"
+                    "Content-Type"  = "application/json"
+                }
+                $liveJson = Invoke-RestMethod -Uri "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary" -Method Post -Headers $headers -Body "{}" -ErrorAction SilentlyContinue
+            }
+        }
+
+        $groups = $null
+        if ($liveJson -and $liveJson.command -and $liveJson.command.data -and $liveJson.command.data.groups) {
+            $groups = $liveJson.command.data.groups
+        } elseif ($liveJson -and $liveJson.groups) {
+            $groups = $liveJson.groups
+        }
+
+        if (-not $groups) {
             Write-Host "  Failed to fetch live quota (Session expired or unauthenticated)" -ForegroundColor Red
             Write-Host "  Run 'mgy $name' to refresh login credentials." -ForegroundColor Gray
             Write-Host ""
             continue
         }
 
-        Write-Host "GEMINI MODELS" -ForegroundColor Magenta
-        Write-Host "  Models within this group: Gemini Flash, Gemini Pro" -ForegroundColor Gray
-        Write-Host ""
-        
-        $gModel = $liveJson.models."gemini-3.6-flash-high"
-        if ($gModel -and $gModel.quotaInfo) {
-            $gFrac = [double]$gModel.quotaInfo.remainingFraction
-            $gPct = [math]::Round($gFrac * 100, 2)
-            $gInt = [int]($gFrac * 100)
-            Write-Host "  Weekly Limit Remaining"
-            Write-Host "  [████████████████████████████████] ${gPct}%"
-            Write-Host "  ${gInt}% remaining" -ForegroundColor Gray
-        } else {
-            Write-Host "  Quota information unavailable" -ForegroundColor Gray
-        }
-        Write-Host ""
+        foreach ($g in $groups) {
+            $gName = if ($g.name) { $g.name.ToUpper() } elseif ($g.displayName) { $g.displayName.ToUpper() } else { "MODELS" }
+            Write-Host "$gName" -ForegroundColor Magenta
+            if ($g.description) {
+                Write-Host "  $($g.description)" -ForegroundColor Gray
+            }
+            Write-Host ""
 
-        Write-Host "CLAUDE AND GPT MODELS" -ForegroundColor Magenta
-        Write-Host "  Models within this group: Claude Opus, Claude Sonnet, GPT-4o" -ForegroundColor Gray
-        Write-Host ""
+            foreach ($b in $g.buckets) {
+                $bName = if ($b.name) { $b.name } elseif ($b.displayName) { $b.displayName } else { "Limit Remaining" }
+                $bFrac = if ($null -ne $b.remaining_fraction) { [double]$b.remaining_fraction } elseif ($null -ne $b.remainingFraction) { [double]$b.remainingFraction } else { 1.0 }
+                $bPct = [math]::Round($bFrac * 100, 2)
+                $bInt = [int]($bFrac * 100)
+                $width = 32
+                $filled = [math]::Min($width, [math]::Max(0, [int]($bPct * $width / 100)))
+                $empty = $width - $filled
+                $bar = "  [" + ("█" * $filled) + ("░" * $empty) + "]"
 
-        $cModel = $liveJson.models."claude-sonnet-4-6"
-        if ($cModel -and $cModel.quotaInfo) {
-            $cFrac = [double]$cModel.quotaInfo.remainingFraction
-            $cPct = [math]::Round($cFrac * 100, 2)
-            $cInt = [int]($cFrac * 100)
-            Write-Host "  Weekly Limit Remaining"
-            Write-Host "  [████████████████████████████████] ${cPct}%"
-            Write-Host "  ${cInt}% remaining" -ForegroundColor Gray
-        } else {
-            Write-Host "  Quota information unavailable" -ForegroundColor Gray
+                Write-Host "  $bName"
+                Write-Host "$bar ${bPct}%"
+                Write-Host "  ${bInt}% remaining" -ForegroundColor Gray
+                Write-Host ""
+            }
         }
-        Write-Host ""
     }
 }
 
